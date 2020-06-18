@@ -47,29 +47,37 @@
 #include "Task.h"
 #include "Rcs_collisionModel.h"
 
-#include "Rcs_filters.h"
-
 
 
 namespace Rcs
 {
 /*! \ingroup RcsController
- * \brief Controller Base Class
+ * \brief Controller Base Class. This class implements a number of generic
+ *        methods to compute kinematic and dynamic magnitudes, such as
+ *        Jacobians, Hessians, velocities etc. The class holds a pointer to a
+ *        graph, which is representing the kinematic state considered. None of
+ *        the methods will change the graph, with the exception of destroying
+ *        it when it is owned by the class itself (see constructor
+ *        documentation). The core of this class is the task vector, which can
+ *        conveniently be parsed from an xml file. Some tasks allow for another
+ *        construction, see details in the respective classes.
+ *
  */
 class ControllerBase
 {
 public:
 
   /*! \brief Constructor based on xml parsing. The file xmlDescription must
-   *         contain the controller definition. The flag xmlParsingFinished
-   *         indicates if the xml file should be closed in this class, or
-   *         left open. The latter is needed for derieved classes that have to
-   *         parse additional data from the xml file. If you are instantiating
-   *         this class directly, it should be set to true (the default).
+   *         contain the file name of the controller definition, or a string
+   *         containing the xml description itself. The flag
+   *         xmlParsingFinished indicates if the xml file should be closed in
+   *         this class, or left open. The latter is needed for derieved classes
+   *         that have to parse additional data from the xml file. If you are
+   *         instantiating this class directly, it should be set to true (the
+   *         default).
    */
   ControllerBase(const std::string& xmlDescription,
                  bool xmlParsingFinished=true);
-
 
   /*! \brief Constructor based on a graph. The new class takes ownership of the
    *         given graph. Use this if you only want to add tasks manually using
@@ -79,16 +87,16 @@ public:
   ControllerBase(RcsGraph* graph);
 
   /*! \brief Copy constructor doing deep copying. The new class owns a deep
-   *         copy of the graph.
+   *         copy of the graph and the collision model (if any).
    */
   ControllerBase(const ControllerBase& copyFromMe);
 
-
-  /*! \brief Assignment operator
+  /*! \brief Assignment operator. The new class owns a deep copy of the graph
+   *         and the collision model (if any).
    */
   ControllerBase& operator= (const ControllerBase& copyFromMe);
 
-  /*! \brief Destructor.
+  /*! \brief Deletes all tasks and frees all memory.
    */
   virtual ~ControllerBase();
 
@@ -161,6 +169,15 @@ public:
    */
   virtual int getTaskArrayIndex(const char* name) const;
 
+  /*! \brief Returns the index of the task vector element. If the task is not
+   *         found, or is NULL, the function returns -1 and issues a warning on
+   *         debug level 4.
+   *
+   *  \param[in] task   Task
+   *  \return Task array index in the vector, or -1, if none found.
+   */
+  virtual int getTaskArrayIndex(const Task* task) const;
+
   /*! \brief Returns a pointer to the task id. If the id is out of range, the
    *         function will exit with a fatal error.
    */
@@ -195,7 +212,7 @@ public:
 
   /*! \brief Return the graph file name (e.g., gScenario.xml)
    */
-  const std::string& getGraphFileName() const;
+  std::string getGraphFileName() const;
 
   /*! \brief Return a pointer to the underlying collision model.
    */
@@ -207,9 +224,16 @@ public:
    *         "activation", the activation of the task will be set to the
    *         value of this tag. The tag "activation" overwrites the value
    *         of the tag "active", if both exist. If none of the tags
-   *         exists, the activation value in a_init remains unchanged.
+   *         exists, the activation value in a_init is set to 0. Vector
+   *         activation is reshaped to nTasks x 1.
    */
-  void readActivationsFromXML(MatNd* a_init) const;
+  void readActivationsFromXML(MatNd* activation) const;
+
+  /*! \brief Reads the activation vector from the xml file. If the xml field
+   *         of the task has the given tag, the activation will be set to
+   *         the corresponding value. Otherwise, the corresponding element of
+   *         vector x remains unchanged. Vector x is reshaped to nTasks x 1.
+   */
   void readActivationVectorFromXML(MatNd* x, const char* tag) const;
 
   /*! \brief Reads the task vector from the xml file. If the xml field
@@ -582,38 +606,39 @@ public:
                                        const MatNd* a_des=NULL,
                                        const MatNd* W=NULL) const;
 
-  /*! \brief Inits the a vector of Median filters with the size, the number of sensors.
-  *          for each sensor a Median filter is initialised.
-  *          initialises a std::vector of MedianFilterND
+  /*! \brief Computes the current task forces based on the values of all
+   *         FT sensors:
+   *         f_task = J_task (J_sensor1# f_sensor1 + J_sensor2# f_sensor2 ...
+   *
+   *  \param[in] ft_task   Force in task coordinates.
+   *  \param[in] a_des  The activation vector is NULL, or of dimension
+   *                    [allTasks x 1]. If it is NULL, the function returns the
+   *                    ft_task vector for all tasks. If it is not NULL,
+   *                    only the dimensions of the tasks are counted that have
+   *                    a larger activation than 0.
   */
-  virtual void genMedianFilter4Sensors(std::vector<MedianFilterND*>* MedFilters_vec);
-  virtual void genSecondOrderFilter4Sensors(std::vector<SecondOrderLPFND*>* SecOrderFilters_vec,
-                                            double tmc, double dt);
+  virtual void computeTaskForce(MatNd* ft_task, const MatNd* a_des=NULL) const;
 
-  virtual void computeTaskForce(MatNd* ft_task,
-                                const MatNd* activation=NULL,
-                                // std::vector<MedianFilterND*>* MedFilters_vec=NULL,
-                                std::vector<SecondOrderLPFND*>* secOrderfilt=NULL,
-                                double* s_ftL=NULL, double* s_ft_fL=NULL,
-                                double* s_ftR=NULL, double* s_ft_fR=NULL) const;
-
-  virtual void computeTaskForce_org(MatNd* ft_task,
-                                    const MatNd* activation=NULL) const;
-
-  // static void thresholdSensor(double* S_ft_f,
-  //                           const double* S_ft,
-  //                           const MatNd* f_treshold,
-  //                           const unsigned int ftDim) const;
-
-  virtual void computeAdmittance(MatNd* compliantFrame,
+  /*! \brief Computes the displacement of a compliant frame based on an
+   *         admittance control law.
+   *
+   *  \param[out] compliantVec Vector of compliant task coordinates. The
+   *                           function adds a small displacement to it.
+   *                           The caller has to make sure it is consistent
+   *                           over time. One can imagine this vector as the
+   *                           task space equivalent to a compliance frame.
+   *  \param[in] ft_task   Desired force in task coordinates.
+   *  \param[in] Kp        Position gain for admittance
+   *  \param[in] a_des  The activation vector is NULL, or of dimension
+   *                    [allTasks x 1]. If it is NULL, the function returns the
+   *                    compliant displacements for all tasks. If it is not
+   *                    NULL, only the dimensions of the tasks are counted
+   *                    that have a larger activation than 0.
+   */
+  virtual void computeAdmittance(MatNd* compliantVec,
                                  const MatNd* ft_task,
-                                 const MatNd* Kp_ext,
+                                 const MatNd* Kp,
                                  const MatNd* a_des);
-
-  // what about const function ?
-  virtual void decayComplainceDelta(MatNd* dx_cmp,
-                                    const MatNd* dx_des_cmp,
-                                    const MatNd* K_att);
 
   /*! \brief Returns the name of the controller as indicated in the xml
    *         file.
@@ -647,21 +672,128 @@ public:
   virtual bool add(const ControllerBase& other, const char* suffix,
                    const HTr* A_BP);
 
+  /*! \brief Adds the task to the controller's task vector and updates the
+   *         task array indices. If other is NULL, the function returns without
+   *         doing anything (just complains on debug level 4).
+   */
   virtual void add(Task* other);
 
+  /*! \brief Prints out a task vector x with task names and additional
+   *         information. Only active tasks (a_des of the corresponding
+   *         task > 0) are printed.
+   *
+   *  \param[in] x       Task vector to be printed. Must be of size
+   *                     getTaskDim() x 1 (larger is ok).
+   *  \param[in] a_des   Activation. Only task vector elements with the task
+   *                     activation >0 are considered. If a_des is NULL, all
+   *                     tasks are printed.
+   */
   virtual void printX(const MatNd* x, const MatNd* a_des = NULL) const;
 
+  /*! \brief See \ref RcsGraph_getModelStateFromXML();
+   */
   bool getModelState(MatNd* q, const char* modelStateName, int timeStamp=0);
 
-  bool checkLimits(bool checkJointLimits=true, bool checkCollisions=true,
-                   bool checkJointVelocities=true) const;
+  /*! \brief Performs various checks on the controller. All margins are in
+   *         SI units.
+   *
+   *  \param checkJointLimits     Perform joint limit check for all joints.
+   *  \param checkCollisions      Perform collision checks for collision model.
+   *  \param checkJointVelocities Check if joint velocities are within range.
+   *  \param jlMarginAngular      Joint limit safety margin for angular joints.
+   *  \param jlMarginLinear       Joint limit safety margin for linear joints.
+   *  \param collMargin           Safety margin for collision check.
+   *  \param speedMarginAngular   Speed limit safety margin for angular joints.
+   *  \param speedMarginLinear    Speed limit safety margin for linear joints.
+   *  \return True for no violation, false otherwise.
+   */
+  bool checkLimits(bool checkJointLimits=true,
+                   bool checkCollisions=true,
+                   bool checkJointVelocities=true,
+                   double jlMarginAngular=0.0,
+                   double jlMarginLinear=0.0,
+                   double collMargin=0.0,
+                   double speedMarginAngular=0.0,
+                   double speedMarginLinear=0.0) const;
 
+  /*! \brief Swaps the task vector newTasks with the one of the class.
+   *
+   *  \param[in] newTasks   Tasks to be swapped. The vector newTasks will
+   *                        contain the class's task vector afterwards.
+   *  \param[in] recomputeArrayIndices   The class's array indices will be
+   *                                     recomputed if this argument is true.
+   */
   void swapTaskVec(std::vector<Task*>& newTasks,
                    bool recomputeArrayIndices=false);
 
   /*! \brief Prints information about tasks to console.
    */
   virtual void print() const;
+
+  /*! \brief Prints whatever is written in the xml-file under the node tag
+   *         usage to the console
+   */
+  static void printUsage(const std::string& xmlFile);
+
+  /*! \brief Computes the inverse dynamics for joint-space tracking:
+   *         \f[
+   *         T_{des} = M a_q + h + g
+   *         \f]
+   *
+   *         with
+   *         \f$
+   *         a_q = \ddot{q} -k_p (q-q_{des}) - k_d (\dot{q}-\dot{q}_{des})
+   *         \f$
+   *
+   *  \param[out] T_des   Desired joint torque. It will be reshaped to the
+   *                      full dimension (RcsGraph::dof x 1)
+   *  \param[in] graph    Underlying graph
+   *  \param[in]  q_des   Desired joint angles. They must be of the full
+   *                      dimension (RcsGraph::dof x 1)
+   *  \param[in]  qp_des  Desired joint velocities. If qp_des is NULL, they
+   *                      are assumed to be zero. Otherwise they must be of
+   *                      the full dimension (RcsGraph::dof x 1)
+   *  \param[in]  qpp_des Desired joint angles. If qpp_des is NULL, they
+   *                      are assumed to be zero. Otherwise they must be of
+   *                      the full dimension (RcsGraph::dof x 1)
+   *  \param[in]  positionGain   Position gain for PD control
+   *  \param[in]  velocityGain   Velocity gain for PD control. If it is -1, the
+   *                             damping is set to asymptotic behavior
+   *                             (velocityGain = 0.5*sqrt(4.0*positionGain))
+   */
+  static void computeInvDynJointSpace(MatNd* T_des,
+                                      const RcsGraph* graph,
+                                      const MatNd* q_des,
+                                      const MatNd* qp_des,
+                                      const MatNd* qpp_des,
+                                      double positionGain,
+                                      double velocityGain);
+
+  /*! \brief Computes the inverse dynamics for joint-space tracking:
+   *         \f[
+   *         T_{des} = M a_q + h + g
+   *         \f]
+   *
+   *         with
+   *         \f$
+   *         a_q = -k_p (q-q_{des}) - k_d \dot{q}
+   *         \f$
+   *
+   *  \param[out] T_des   Desired joint torque. It will be reshaped to the
+   *                      full dimension (RcsGraph::dof x 1)
+   *  \param[in] graph    Underlying graph
+   *  \param[in]  q_des   Desired joint angles. They must be of the full
+   *                      dimension (RcsGraph::dof x 1)
+   *  \param[in]  positionGain   Position gain for PD control
+   *  \param[in]  velocityGain   Velocity gain for PD control. If it is -1, the
+   *                             damping is set to asymptotic behavior
+   *                             (velocityGain = 0.5*sqrt(4.0*positionGain))
+   */
+  static void computeInvDynJointSpace(MatNd* T_des,
+                                      const RcsGraph* graph,
+                                      const MatNd* q_des,
+                                      double positionGain,
+                                      double velocityGain=-1.0);
 
 protected:
 
@@ -676,7 +808,6 @@ private:
   RcsCollisionMdl* cMdl;             //!< Collision model
   std::string name;                  //!< Name of the controller
   std::string xmlFile;               //!< Configuration file name
-  std::string xmlGraphFile;          //!< Graph file name
   std::vector<size_t> taskArrayIdx;  //!< List of indices in task vector
 };
 

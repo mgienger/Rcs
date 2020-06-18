@@ -61,25 +61,43 @@ Rcs::PhysicsNode::PhysicsNode(PhysicsBase* sim_, bool resizeable_):
   NodeBase(), modelNd(NULL), physicsNd(NULL), sim(sim_), displayMode(0),
   resizeable(resizeable_)
 {
+  setName("PhysicsNode");
+
   KeyCatcherBase::registerKey("C", "Toggle contacts node", "PhysicsNode");
   KeyCatcherBase::registerKey("f", "Scale drag force by 0.1", "PhysicsNode");
   KeyCatcherBase::registerKey("F", "Scale drag force by 10.0", "PhysicsNode");
   KeyCatcherBase::registerKey("T", "Toggle physics or graph transform display",
                               "PhysicsNode");
 
+  // This node shows the simulation result mapped to the minimal coordinate
+  // description used in the graph. We acquire all joint angles and use the
+  // results from the forward kinematics. This may not reflect the phyics
+  // simulation result, since there is no joint separation etc. visible. For
+  // this, the below instantiated physicsNd is responsible.
+  // \todo: Maybe only use one node, and make it toggleable?
   this->modelNd = new GraphNode(sim_->getGraph(), resizeable, false);
   modelNd->displayGraphicsModel(false);
   modelNd->displayPhysicsModel(true);
   modelNd->setGhostMode(true, "RED");
+  modelNd->setName("PhysicsNode::modelNd");
   pat->addChild(modelNd);
 
   osg::ref_ptr<ContactsNode> cn = new ContactsNode(sim, 0.1, "RUBY");
   cn->toggle();   // Start with contacts
   pat->addChild(cn.get());
 
+  // This node displays the bodies at the transformations coming natively
+  // from the phyics engine. Since these in some cases don't use minimal
+  // coordinates, one might see separation of objects in case of large
+  // forces or other effects. This node also updates soft body meshes if any.
   this->physicsNd = new GraphNode(sim_->getGraph(), resizeable, false);
   physicsNd->displayGraphicsModel(false);
   physicsNd->displayPhysicsModel(true);
+  if (std::string(sim->getClassName())=="SoftBullet")
+  {
+    physicsNd->setDynamicMeshUpdate(true);
+  }
+  physicsNd->setName("PhysicsNode::physicsNd");
   pat->addChild(physicsNd);
 
   updateTransformPointers();
@@ -190,7 +208,7 @@ void Rcs::PhysicsNode::setPhysicsTransform(bool enable)
 bool Rcs::PhysicsNode::eventCallback(const osgGA::GUIEventAdapter& ea,
                                      osgGA::GUIActionAdapter& aa)
 {
-  // In case the graph is resizeable, bodies might be repalced on the fly. To
+  // In case the graph is resizeable, bodies might be replaced on the fly. To
   // make sure we always point to the correct ones, we update the transformation
   // pointers before each iteration.
   if (resizeable==true && modelNd->isVisible())
@@ -403,7 +421,7 @@ void Rcs::PhysicsNode::setDisplayMode(int mode)
       {
         cnd->show();
       }
-      RLOG(4, "Showing both transforms");
+      RLOG(5, "Showing both transforms");
       break;
     case 1:   // Graph only
       setPhysicsTransform(false);
@@ -413,7 +431,7 @@ void Rcs::PhysicsNode::setDisplayMode(int mode)
       {
         cnd->hide();
       }
-      RLOG(4, "Showing graph transform only");
+      RLOG(5, "Showing graph transform only");
       break;
     case 2:   // Physics only
       setPhysicsTransform(true);
@@ -422,7 +440,7 @@ void Rcs::PhysicsNode::setDisplayMode(int mode)
       {
         cnd->show();
       }
-      RLOG(4, "Showing physics transform only");
+      RLOG(5, "Showing physics transform only");
       break;
     default:
       RLOG(1, "Unhandled display mode %d", displayMode);
@@ -528,4 +546,60 @@ void Rcs::PhysicsNode::addBodyNode(const RcsBody* body)
   const RcsBody* simBdy = RcsGraph_getBodyByName(sim->getGraph(), body->name);
   const HTr* physicsTrf = sim->getPhysicsTransformPtr(simBdy);
   node->setTransformPtr(physicsTrf);
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+bool Rcs::PhysicsNode::setDebugDrawer(bool enable)
+{
+#if defined (USE_BULLET)
+
+  Rcs::BulletSimulation* s = dynamic_cast<Rcs::BulletSimulation*>(sim);
+
+  if (s == NULL)
+  {
+    RLOG(1, "No debug drawer for other simulations than Bullet");
+    return false;
+  }
+
+
+  if (enable==false)   // Disable the debug drawer
+  {
+    RLOG(0, "Disabling debug drawer");
+    BulletDebugDrawer* dDraw = s->getDebugDrawer();
+    if (dDraw)
+    {
+      dDraw->hide();
+    }
+
+    s->setDebugDrawer(NULL);
+  }
+  else   // Enable the debug drawer
+  {
+    BulletDebugDrawer* nd_i = NULL;
+
+    // Find the debug drawer from the children of this class
+    for (unsigned int i=0; i<pat->getNumChildren(); ++i)
+    {
+      nd_i = dynamic_cast<BulletDebugDrawer*>(pat->getChild(i));
+    }
+
+    if (nd_i != NULL)
+    {
+      RLOG(0, "Enabling debug drawer");
+      nd_i->show();
+      s->setDebugDrawer(nd_i);
+    }
+
+  }
+
+  return true;
+
+#else
+
+  RLOG(1, "No debug drawer for other simulations than Bullet");
+  return false;
+
+#endif
 }

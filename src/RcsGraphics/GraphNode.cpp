@@ -111,6 +111,7 @@ GraphNode::GraphNode() :
   wireframe(false),
   ghostMode(false)
 {
+  setName("GraphNode");
   this->switchNode = new osg::Switch;
   addChild(switchNode.get());
 }
@@ -124,6 +125,7 @@ GraphNode::GraphNode(const RcsGraph* g, bool resizeable, bool addSetters) :
   wireframe(false),
   ghostMode(false)
 {
+  setName("GraphNode");
   this->switchNode = new osg::Switch;
   addChild(switchNode.get());
 
@@ -135,8 +137,6 @@ GraphNode::GraphNode(const RcsGraph* g, bool resizeable, bool addSetters) :
  ******************************************************************************/
 GraphNode::~GraphNode()
 {
-  RLOG(5, "Removing event callbacks");
-  removeEventCallback(this->frameHandler.get());
   RLOG(5, "Destroying GraphNode");
 }
 
@@ -889,6 +889,27 @@ void GraphNode::setBodyTransformPtr(const RcsBody* body, const HTr* A_BI)
 
 }
 
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void GraphNode::setDynamicMeshUpdate(bool enabled)
+{
+  GraphNodeList::iterator li;
+  BodyNodeVisitor bnv;
+  this->accept(bnv);
+
+  for (li = bnv.nodes.begin(); li != bnv.nodes.end(); ++li)
+  {
+    osg::ref_ptr<Rcs::BodyNode> nd = *li;
+
+    if ((nd.valid()))
+    {
+      nd->setDynamicMeshUpdate(enabled);
+    }
+  }
+
+}
+
 /******************************************************************************
  * Add a node after the switch
  *****************************************************************************/
@@ -1015,4 +1036,3 @@ std::vector<const BodyNode*> GraphNode::getBodyNodes() const
 
 
 }   // namespace Rcs
-

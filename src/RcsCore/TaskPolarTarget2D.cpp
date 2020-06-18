@@ -58,11 +58,10 @@ Rcs::TaskPolarTarget2D::TaskPolarTarget2D(const std::string& className,
                                           int dim) :
   Task(className, node, _graph, dim), direction(2)
 {
-  getParameter(0)->setParameters(-M_PI, M_PI, (180.0/M_PI), "Phi [deg]");
-
-  if (getDim() >= 2)
+  if (getClassName()=="POLAR_TARGET")
   {
-    getParameter(1)->setParameters(-M_PI, M_PI, (180.0/M_PI), "Theta [deg]");
+    resetParameter(Parameters(-M_PI, M_PI, (180.0/M_PI), "Phi [deg]"));
+    addParameter(Parameters(-M_PI, M_PI, (180.0/M_PI), "Theta [deg]"));
   }
 
   // Parse axis direction (should be X, Y or Z)
@@ -311,6 +310,17 @@ void Rcs::TaskPolarTarget2D::setTarget(double phi, double theta)
  ******************************************************************************/
 void Rcs::TaskPolarTarget2D::computeSlerpFrame(double A_SR[3][3]) const
 {
+  computeSlerpFrame(A_SR, this->polarDes);
+}
+
+/*******************************************************************************
+ * z-axis: current Polar axis
+ * y-axis: rotates current on desired Polar axis
+ * x-axis: completes right hand frame
+ ******************************************************************************/
+void Rcs::TaskPolarTarget2D::computeSlerpFrame(double A_SR[3][3],
+                                               const double polarDes[2]) const
+{
   // Compute current Polar axis
   double A_ER[3][3];
   computeRelativeRotationMatrix(A_ER, this->ef, this->refBody);
@@ -318,7 +328,7 @@ void Rcs::TaskPolarTarget2D::computeSlerpFrame(double A_SR[3][3]) const
 
   // Compute the desired polar axis
   double a_des[3];
-  Vec3d_getPolarAxis(a_des, this->polarDes[0], this->polarDes[1]);
+  Vec3d_getPolarAxis(a_des, polarDes[0], polarDes[1]);
 
   // In the following, we construct a coordinate frame S with z-axis as
   // current z-axis, y-axis as the rotation axis that rotates the z-axis

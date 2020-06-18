@@ -36,8 +36,7 @@
 
 
 
-/*!
- * \page RcsExamples Example program
+/*! \page RcsExamples Rcs.cpp example program
  *
  *  The Rcs.cpp example program implements a number of different modes that
  *  show how to use the functionality of the libraries. The following command
@@ -91,6 +90,7 @@
 #include <Rcs_body.h>
 #include <Rcs_shape.h>
 #include <Rcs_utils.h>
+#include <Rcs_filters.h>
 #include <IkSolverConstraintRMR.h>
 #include <SolverRAC.h>
 #include <TaskFactory.h>
@@ -192,8 +192,7 @@ static bool getModel(char* directory, char* xmlFileName)
  ******************************************************************************/
 int main(int argc, char** argv)
 {
-  RMSG("Starting Rcs...");
-  int mode = 0;
+  int result = 0, mode = 0;
   char xmlFileName[128] = "", directory[128] = "";
 
   // Ctrl-C callback handler
@@ -206,7 +205,7 @@ int main(int argc, char** argv)
   // Parse command line arguments
   Rcs::CmdLineParser argP(argc, argv);
   argP.getArgument("-dl", &RcsLogLevel, "Debug level (default is 0)");
-  argP.getArgument("-m", &mode, "Test mode");
+  argP.getArgument("-m", &mode, "Test mode (default is 0)");
   argP.getArgument("-f", xmlFileName, "Configuration file name");
   argP.getArgument("-dir", directory, "Configuration file directory");
   bool valgrind = argP.hasArgument("-valgrind",
@@ -277,8 +276,6 @@ int main(int argc, char** argv)
       printf("\t\t6   Controller unit tests\n");
       printf("\t\t7   Null space convergence test\n");
       printf("\t\t8   Resolved acceleration controller test\n");
-      printf("\t\t9   MatNdWidget test\n");
-      printf("\t\t12  Distance function test\n");
       printf("\t\t13  Depth first traversal test\n");
 
       REXEC(1)
@@ -298,6 +295,7 @@ int main(int argc, char** argv)
       {
         Rcs::TaskFactory::instance()->printRegisteredTasks();
         Rcs::PhysicsFactory::print();
+        RcsShape_fprintDistanceFunctions(stdout);
       }
 
       break;
@@ -618,7 +616,6 @@ int main(int argc, char** argv)
             printf("Enter scaling factor: ");
             double scaleFactor;
             std::cin >> scaleFactor;
-            pthread_mutex_lock(&graphLock);
 
             bool collisionVisible = gn->collisionModelVisible();
             bool graphicsVisible = gn->graphicsModelVisible();
@@ -629,6 +626,7 @@ int main(int argc, char** argv)
             viewer->removeNode(gn);
             gn = NULL;
 
+            pthread_mutex_lock(&graphLock);
             RcsGraph_scale(graph, scaleFactor);
             gn = new Rcs::GraphNode(graph);
             gn->toggleReferenceFrames();
@@ -770,13 +768,14 @@ int main(int argc, char** argv)
               RcsGraph_fprint(stderr, graph);
               RLOGS(0, "m=%f   r_com=%f %f %f",
                     mass, r_com[0], r_com[1], r_com[2]);
+              RcsGraph_fprintModelState(stdout, graph, graph->q);
             }
           }
           else if (kc->getAndResetKey('b'))
           {
             RMSG("Boxifying graph ...");
-            pthread_mutex_lock(&graphLock);
             viewer->removeNode(gn);
+            pthread_mutex_lock(&graphLock);
             gn = NULL;
             RCSGRAPH_TRAVERSE_BODIES(graph)
             {
@@ -798,7 +797,6 @@ int main(int argc, char** argv)
               RLOG(0, "%s destroyed Gui", success ? "Successfully" : "Not");
             }
 
-            pthread_mutex_lock(&graphLock);
             bool collisionVisible = gn->collisionModelVisible();
             bool graphicsVisible = gn->graphicsModelVisible();
             bool physicsVisible = gn->physicsModelVisible();
@@ -806,6 +804,8 @@ int main(int argc, char** argv)
             bool ghostVisible = gn->getGhostMode();
             bool wireframeVisible = gn->getWireframe();
             viewer->removeNode(gn);
+            viewer->removeNode("PPSSensorNode");
+            pthread_mutex_lock(&graphLock);
             gn = NULL;
             RcsGraph_destroy(graph);
             graph = RcsGraph_create(xmlFileName);
@@ -1018,14 +1018,19 @@ int main(int argc, char** argv)
         }
 
         MatNd_copy(q_test, graph->q);
-        Rcs_gradientTestGraph(graph, q_test, true);
-
-        if (loopCount > nIter)
+        bool success = Rcs_gradientTestGraph(graph, q_test,
+                                             RcsLogLevel>0?true:false);
+        if (!success)
         {
-          runLoop = false;
+          result++;
         }
 
         loopCount++;
+
+        if (loopCount >= nIter)
+        {
+          runLoop = false;
+        }
       }
 
       RcsGraph_destroy(graph);
@@ -1049,11 +1054,12 @@ int main(int argc, char** argv)
       Rcs::KeyCatcherBase::registerKey("u", "Toggle gravity compensation");
       Rcs::KeyCatcherBase::registerKey("W", "Create joint widget");
       Rcs::KeyCatcherBase::registerKey("m", "Change physics parameters");
-      Rcs::KeyCatcherBase::registerKey("e", "Remove body by name");
+      Rcs::KeyCatcherBase::registerKey("e", "Remove body under mouse");
       Rcs::KeyCatcherBase::registerKey("k", "Shoot sphere");
       Rcs::KeyCatcherBase::registerKey("D", "Show dot file of graph");
       Rcs::KeyCatcherBase::registerKey("a", "Deactivate body under mouse");
       Rcs::KeyCatcherBase::registerKey("A", "Activate body under mouse");
+      Rcs::KeyCatcherBase::registerKey("Q", "Write current q to model_state");
 
       double dt = 0.005, tmc = 0.01, damping = 2.0, shootMass = 1.0;
       char hudText[2056] = "";
@@ -1082,6 +1088,8 @@ int main(int argc, char** argv)
                                          "of shapes dynamically");
       bool syncHard = argP.hasArgument("-syncHard", "Try to sync with wall "
                                        "clock time as hard as possible");
+      bool seqSim = argP.hasArgument("-sequentialPhysics", "Physics simulation "
+                                     "step alternating with viewer's frame()");
       argP.getArgument("-physics_config", physicsCfg, "Configuration file name"
                        " for physics (default is %s)", physicsCfg);
       argP.getArgument("-physicsEngine", physicsEngine,
@@ -1141,9 +1149,6 @@ int main(int argc, char** argv)
         RFATAL("Couldn't create physics engine \"%s\"", physicsEngine);
       }
 
-
-
-
       if (testCopy==true)
       {
         RcsGraph* graph2 = graph;
@@ -1156,15 +1161,9 @@ int main(int argc, char** argv)
         RcsGraph_destroy(graph2);
       }
 
-
       if (disableCollisions==true)
       {
         sim->disableCollisions();
-      }
-
-      REXEC(5)
-      {
-        sim->print();
       }
 
       // remember initial state for resetting simulation
@@ -1194,7 +1193,15 @@ int main(int argc, char** argv)
         viewer->add(hud);
         kc = new Rcs::KeyCatcher();
         viewer->add(kc);
-        viewer->runInThread(mtx);
+
+        if (seqSim==false)
+        {
+          viewer->runInThread(mtx);
+        }
+        else
+        {
+          simNode->setDebugDrawer(true);
+        }
 
         if (skipGui==false)
         {
@@ -1266,6 +1273,10 @@ int main(int argc, char** argv)
           int guiHandle = Rcs::JointWidget::create(graph, mtx, q_des, q_curr);
           void* ptr = RcsGuiFactory_getPointer(guiHandle);
           jw = static_cast<Rcs::JointWidget*>(ptr);
+        }
+        else if (kc && kc->getAndResetKey('Q'))
+        {
+          RcsGraph_fprintModelState(stdout, graph, graph->q);
         }
         else if (kc && kc->getAndResetKey('k'))
         {
@@ -1371,18 +1382,13 @@ int main(int argc, char** argv)
         }
         else if (kc && kc->getAndResetKey('e'))
         {
-          std::string bdyName;
-          //RMSG("Removing body");
-          //printf("Enter body to remove: ");
-          //std::cin >> bdyName;
-
           Rcs::BodyNode* bNd = viewer->getBodyNodeUnderMouse<Rcs::BodyNode*>();
           if (bNd == NULL)
           {
             RMSG("No BodyNode found under mouse");
             continue;
           }
-          bdyName = std::string(bNd->body()->name);
+          std::string bdyName = std::string(bNd->body()->name);
 
           RMSG("Removing body \"%s\" under mouse", bdyName.c_str());
           pthread_mutex_lock(&graphLock);
@@ -1480,10 +1486,10 @@ int main(int argc, char** argv)
         {
           RMSG("Reloading GraphNode from %s", xmlFileName);
           double t_reload = Timer_getSystemTime();
-          pthread_mutex_lock(&graphLock);
           int displayMode = simNode->getDisplayMode();
           viewer->removeNode(simNode);
           simNode = NULL;
+          pthread_mutex_lock(&graphLock);
           double t_reload2 = Timer_getSystemTime();
           RcsGraph_destroy(graph);
           graph = RcsGraph_create(xmlFileName);
@@ -1608,8 +1614,8 @@ int main(int argc, char** argv)
         //////////////////////////////////////////////////////////////
 
         double dtSim = Timer_getTime();
-        // sim->simulate(dt, q_curr, q_dot_curr, NULL, NULL, !skipControl);
         sim->simulate(dt, graph, NULL, NULL, !skipControl);
+        sim->getJointAngles(q_curr);
         dtSim = Timer_getTime() - dtSim;
 
 
@@ -1619,6 +1625,11 @@ int main(int argc, char** argv)
         RcsGraph_setState(graph, q_curr, q_dot_curr);
 
         pthread_mutex_unlock(&graphLock);
+
+        if (seqSim==true)
+        {
+          viewer->frame();
+        }
 
         if (valgrind)
         {
@@ -1647,6 +1658,7 @@ int main(int argc, char** argv)
         else
         {
           Timer_waitNoCatchUp(timer);
+          Timer_usleep(1);
         }
 
         loopCount++;
@@ -1683,7 +1695,7 @@ int main(int argc, char** argv)
     {
       Rcs::KeyCatcherBase::registerKey("q", "Quit");
       Rcs::KeyCatcherBase::registerKey("T", "Run controller test");
-      Rcs::KeyCatcherBase::registerKey("p", "Toggle pause");
+      Rcs::KeyCatcherBase::registerKey(" ", "Toggle pause");
       Rcs::KeyCatcherBase::registerKey("a", "Change IK algorithm");
       Rcs::KeyCatcherBase::registerKey("d", "Write q-vector to q.dat");
       Rcs::KeyCatcherBase::registerKey("D", "Set q-vector from file q.dat");
@@ -1691,16 +1703,21 @@ int main(int argc, char** argv)
       Rcs::KeyCatcherBase::registerKey("C", "Toggle closest point lines");
       Rcs::KeyCatcherBase::registerKey("o", "Toggle distance calculation");
       Rcs::KeyCatcherBase::registerKey("m", "Manipulability null space");
-      Rcs::KeyCatcherBase::registerKey("e", "Link generic body");
+      Rcs::KeyCatcherBase::registerKey("e", "Remove body under mouse");
+      Rcs::KeyCatcherBase::registerKey("E", "Link generic body");
       Rcs::KeyCatcherBase::registerKey("v", "Write current q to model_state");
+      Rcs::KeyCatcherBase::registerKey("f", "Toggle physics feedback");
+      Rcs::KeyCatcherBase::registerKey("p", "Print controller info on console");
 
       int algo = 0;
       double alpha = 0.05, lambda = 1.0e-8, tmc = 0.1, dt = 0.01, dt_calc = 0.0;
-      double jlCost = 0.0, dJlCost = 0.0;
+      double jlCost = 0.0, dJlCost = 0.0, clipLimit = 0.1, scaleDragForce = 0.01;
       bool calcDistance = true;
       strcpy(xmlFileName, "cAction.xml");
       strcpy(directory, "config/xml/DexBot");
       char effortBdyName[256] = "";
+      char physicsEngine[32] = "Bullet";
+      char physicsCfg[128] = "config/physics/physics.xml";
 
       argP.getArgument("-algo", &algo, "IK algorithm: 0: left inverse, 1: "
                        "right inverse (default is %d)", algo);
@@ -1711,9 +1728,17 @@ int main(int argc, char** argv)
       argP.getArgument("-f", xmlFileName);
       argP.getArgument("-dir", directory);
       argP.getArgument("-tmc", &tmc, "Filter time constant for sliders");
-      argP.getArgument("-dt", &dt, "Sampling time interval");
+      argP.getArgument("-dt", &dt, "Sampling time interval (default: %f)", dt);
+      argP.getArgument("-clipLimit", &clipLimit, "Clip limit for dx (default"
+                       "is %f)", clipLimit);
       argP.getArgument("-staticEffort", effortBdyName,
                        "Body to map static effort");
+      argP.getArgument("-physics_config", physicsCfg, "Configuration file name"
+                       " for physics (default is %s)", physicsCfg);
+      argP.getArgument("-physicsEngine", physicsEngine,
+                       "Physics engine (default is \"%s\")", physicsEngine);
+      argP.getArgument("-scaleDragForce", &scaleDragForce, "Scale factor for"
+                       " mouse dragger (default is \"%f\")", scaleDragForce);
       bool ffwd = argP.hasArgument("-ffwd", "Feed-forward dx only");
       bool pause = argP.hasArgument("-pause", "Pause after each iteration");
       bool launchJointWidget = argP.hasArgument("-jointWidget",
@@ -1725,14 +1750,16 @@ int main(int argc, char** argv)
                                          "null space");
       bool constraintIK = argP.hasArgument("-constraintIK", "Use constraint IK"
                                            " solver");
+      bool physics = argP.hasArgument("-physics", "Use physics simulation");
+
+      Rcs_addResourcePath(directory);
 
       if (argP.hasArgument("-h"))
       {
         printf("Resolved motion rate control test\n\n");
+        Rcs::ControllerBase::printUsage(xmlFileName);
         break;
       }
-
-      Rcs_addResourcePath(directory);
 
       // Create controller
       Rcs::ControllerBase controller(xmlFileName, true);
@@ -1747,14 +1774,14 @@ int main(int argc, char** argv)
         ikSolver = new Rcs::IkSolverRMR(&controller);
       }
 
-      MatNd* dq_des  = MatNd_create(controller.getGraph()->dof, 1);
-      MatNd* q_dot_des  = MatNd_create(controller.getGraph()->dof, 1);
-      MatNd* a_des   = MatNd_create(controller.getNumberOfTasks(), 1);
-      MatNd* x_curr  = MatNd_create(controller.getTaskDim(), 1);
-      MatNd* x_des   = MatNd_create(controller.getTaskDim(), 1);
-      MatNd* x_des_f = MatNd_create(controller.getTaskDim(), 1);
-      MatNd* dx_des  = MatNd_create(controller.getTaskDim(), 1);
-      MatNd* dH      = MatNd_create(1, controller.getGraph()->nJ);
+      MatNd* dq_des    = MatNd_create(controller.getGraph()->dof, 1);
+      MatNd* q_dot_des = MatNd_create(controller.getGraph()->dof, 1);
+      MatNd* a_des     = MatNd_create(controller.getNumberOfTasks(), 1);
+      MatNd* x_curr    = MatNd_create(controller.getTaskDim(), 1);
+      MatNd* x_des     = MatNd_create(controller.getTaskDim(), 1);
+      MatNd* x_des_f   = MatNd_create(controller.getTaskDim(), 1);
+      MatNd* dx_des    = MatNd_create(controller.getTaskDim(), 1);
+      MatNd* dH        = MatNd_create(1, controller.getGraph()->nJ);
 
       controller.readActivationsFromXML(a_des);
       controller.computeX(x_curr);
@@ -1768,11 +1795,42 @@ int main(int argc, char** argv)
       MatNd_fromStack(F_effort, 4, 1);
       MatNd F_effort3 = MatNd_fromPtr(3, 1, F_effort->ele);
 
+      // Physics engine
+      Rcs::PhysicsBase* sim = NULL;
+      RcsGraph* simGraph = NULL;
+      bool physicsFeedback = false;
+
+      if (physics)
+      {
+        simGraph = RcsGraph_clone(controller.getGraph());
+
+        RCSGRAPH_TRAVERSE_JOINTS(simGraph)
+        {
+          if ((JNT->ctrlType == RCSJOINT_CTRL_VELOCITY) ||
+              (JNT->ctrlType == RCSJOINT_CTRL_TORQUE))
+          {
+            JNT->ctrlType = RCSJOINT_CTRL_POSITION;
+          }
+        }
+        RcsGraph_setState(simGraph, NULL, NULL);
+
+        sim = Rcs::PhysicsFactory::create(physicsEngine, simGraph, physicsCfg);
+
+        if (sim==NULL)
+        {
+          Rcs::PhysicsFactory::print();
+          RLOG(1, "Couldn't create physics engine \"%s\"", physicsEngine);
+          RcsGraph_destroy(simGraph);
+          simGraph = NULL;
+        }
+      }
+
 
       // Create visualization
       Rcs::Viewer* v           = NULL;
       Rcs::KeyCatcher* kc      = NULL;
       Rcs::GraphNode* gn       = NULL;
+      Rcs::PhysicsNode* simNode  = NULL;
       Rcs::HUD* hud            = NULL;
       Rcs::BodyPointDragger* dragger = NULL;
       Rcs::VertexArrayNode* cn = NULL;
@@ -1785,11 +1843,18 @@ int main(int argc, char** argv)
         gn      = new Rcs::GraphNode(controller.getGraph());
         hud     = new Rcs::HUD();
         dragger = new Rcs::BodyPointDragger();
-        dragger->scaleDragForce(0.01);
+        dragger->scaleDragForce(scaleDragForce);
         v->add(gn);
         v->add(hud);
         v->add(kc);
         v->add(dragger);
+
+        if (sim)
+        {
+          simNode = new Rcs::PhysicsNode(sim);
+          gn->setGhostMode(true, "RED");
+          v->add(simNode);
+        }
 
         if (controller.getCollisionMdl() != NULL)
         {
@@ -1804,15 +1869,15 @@ int main(int argc, char** argv)
         // Launch the task widget
         if (ffwd == false)
         {
-          Rcs::ControllerWidgetBase::create(&controller, a_des, x_des,
-                                            x_curr, mtx);
+          Rcs::ControllerWidgetBase::create(&controller, a_des, x_des, x_curr,
+                                            mtx);
         }
         else
         {
           // Launch the task widget
-          MatNdWidget* mw = MatNdWidget::create(dx_des, x_curr,
-                                                -1.0, 1.0, "dx",
-                                                mtx);
+          Rcs::MatNdWidget* mw = Rcs::MatNdWidget::create(dx_des, x_curr,
+                                                          -1.0, 1.0, "dx",
+                                                          mtx);
 
           std::vector<std::string> labels;
           for (size_t id=0; id<controller.getNumberOfTasks(); id++)
@@ -1820,14 +1885,14 @@ int main(int argc, char** argv)
             for (unsigned int j=0; j<controller.getTaskDim(id); j++)
               labels.push_back(controller.getTaskName(id) +
                                std::string(": ") +
-                               controller.getTask(id)->getParameter(j)->name);
+                               controller.getTask(id)->getParameter(j).name);
           }
 
           mw->setLabels(labels);
 
-          mw = MatNdWidget::create(a_des, a_des,
-                                   0.0, 1.0, "activation",
-                                   &graphLock);
+          mw = Rcs::MatNdWidget::create(a_des, a_des,
+                                        0.0, 1.0, "activation",
+                                        &graphLock);
           labels.clear();
           for (size_t id=0; id<controller.getNumberOfTasks(); id++)
           {
@@ -1845,8 +1910,8 @@ int main(int argc, char** argv)
         if (effortBdy != NULL)
         {
           std::vector<std::string> labels;
-          MatNdWidget* mw = MatNdWidget::create(F_effort, F_effort,
-                                                -1.0, 1.0, "F_effort", mtx);
+          Rcs::MatNdWidget* mw = Rcs::MatNdWidget::create(F_effort, F_effort,
+                                                          -1.0, 1.0, "F_effort", mtx);
           labels.push_back("Fx");
           labels.push_back("Fy");
           labels.push_back("Fz");
@@ -1875,7 +1940,6 @@ int main(int argc, char** argv)
           }
 
           controller.computeDX(dx_des, x_des_f);
-          double clipLimit = 0.1;
           MatNd clipArr = MatNd_fromPtr(1, 1, &clipLimit);
           MatNd_saturateSelf(dx_des, &clipArr);
         }
@@ -1951,6 +2015,31 @@ int main(int argc, char** argv)
         bool poseOK = controller.checkLimits();
         controller.computeX(x_curr);
 
+        if (sim)
+        {
+          sim->setControlInput(controller.getGraph()->q, NULL, NULL);
+          sim->simulate(dt, simGraph);
+          RcsGraph_setState(simGraph, NULL, NULL);
+          if (physicsFeedback)
+          {
+            RcsGraph_setState(controller.getGraph(), simGraph->q, simGraph->q_dot);
+          }
+          else
+          {
+            // Compute at least the sensor values
+            // Copy sensors
+            RcsSensor* dstSensorPtr = controller.getGraph()->sensor;
+            const RcsSensor* srcSensorPtr = sim->getGraph()->sensor;
+
+            while (dstSensorPtr != NULL)
+            {
+              MatNd_copy(dstSensorPtr->rawData, srcSensorPtr->rawData);
+              dstSensorPtr = dstSensorPtr->next;
+              srcSensorPtr = srcSensorPtr->next;
+            }
+          }
+        }
+
         dJlCost = -jlCost;
         jlCost = controller.computeJointlimitCost();
         dJlCost += jlCost;
@@ -1978,7 +2067,7 @@ int main(int argc, char** argv)
           RLOGS(0, "Running controller test");
           controller.test(true);
         }
-        else if (kc && kc->getAndResetKey('p'))
+        else if (kc && kc->getAndResetKey(' '))
         {
           pause = !pause;
           RMSG("Pause modus is %s", pause ? "ON" : "OFF");
@@ -2021,6 +2110,53 @@ int main(int argc, char** argv)
         }
         else if (kc && kc->getAndResetKey('e'))
         {
+          Rcs::BodyNode* bNd = v->getBodyNodeUnderMouse<Rcs::BodyNode*>();
+          if (bNd == NULL)
+          {
+            RMSG("No BodyNode found under mouse");
+            continue;
+          }
+          std::string bdyName = std::string(bNd->body()->name);
+
+          RMSG("Removing body \"%s\" under mouse", bdyName.c_str());
+          pthread_mutex_lock(&graphLock);
+          bool ok = true;
+
+          if (sim)
+          {
+            RLOG(0, "Removing from simulator");
+            ok = sim->removeBody(bdyName.c_str());
+          }
+
+          if (ok)
+          {
+            MatNd* arrBuf[2];
+            arrBuf[0] = dq_des;
+            arrBuf[1] = q_dot_des;
+
+            RLOG(0, "Removing from graph");
+            ok = RcsGraph_removeBody(controller.getGraph(), bdyName.c_str(),
+                                     arrBuf, 2) && ok;
+
+            if (ok && simNode)
+            {
+              RLOG(0, "Removing from simNode");
+              ok = simNode->removeBodyNode(bdyName.c_str()) && ok;
+            }
+
+            if (ok && gn)
+            {
+              RLOG(0, "Removing from GraphNode");
+              ok = gn->removeBodyNode(bdyName.c_str()) && ok;
+            }
+
+          }
+          pthread_mutex_unlock(&graphLock);
+          RMSG("%s removing body \"%s\"", ok ? "SUCCEEDED" : "FAILED",
+               bdyName.c_str());
+        }
+        else if (kc && kc->getAndResetKey('E'))
+        {
           std::string bdyName;
           RMSG("Linking GenericBody");
           printf("Enter body to link against: ");
@@ -2035,7 +2171,16 @@ int main(int argc, char** argv)
           RcsGraph_fprintModelState(stdout, controller.getGraph(),
                                     controller.getGraph()->q);
         }
+        else if (kc && kc->getAndResetKey('p'))
+        {
+          controller.print();
+        }
 
+        else if (kc && kc->getAndResetKey('f'))
+        {
+          physicsFeedback = !physicsFeedback;
+          RMSG("Physics feedback is %s", physicsFeedback ? "ON" : "OFF");
+        }
 
         sprintf(hudText, "IK calculation: %.1f us\ndof: %d nJ: %d "
                 "nqr: %d nx: %d\nJL-cost: %.6f dJL-cost: %.6f %s %s"
@@ -2111,10 +2256,13 @@ int main(int argc, char** argv)
       Rcs::KeyCatcherBase::registerKey("q", "Quit");
       Rcs::KeyCatcherBase::registerKey("p", "Toggle pause");
 
+      int nTests = 1, loopCount = 0;
       strcpy(xmlFileName, "cAction.xml");
       strcpy(directory, "config/xml/GenericHumanoid");
       argP.getArgument("-f", xmlFileName);
       argP.getArgument("-dir", directory);
+      argP.getArgument("-nTests", &nTests, "Number of test iterations (default"
+                       " is %d)", nTests);
       bool pause = argP.hasArgument("-pause", "Pause after each iteration");
       bool skipGraphics = valgrind ||
                           argP.hasArgument("-noGraphics",
@@ -2170,7 +2318,8 @@ int main(int argc, char** argv)
 
         if (success == false)
         {
-          RPAUSE_MSG("Test failed");
+          //RPAUSE_MSG("Test failed");
+          result++;
         }
 
         if (kc && kc->getAndResetKey('q'))
@@ -2182,7 +2331,7 @@ int main(int argc, char** argv)
           pause = !pause;
         }
 
-        if (valgrind==true)
+        if ((valgrind==true) && (loopCount>=nTests))
         {
           runLoop = false;
         }
@@ -2196,6 +2345,7 @@ int main(int argc, char** argv)
           Timer_waitDT(0.01);
         }
 
+        loopCount++;
       }
 
       MatNd_destroy(q);
@@ -2217,16 +2367,17 @@ int main(int argc, char** argv)
       Rcs::KeyCatcherBase::registerKey("p", "Print information to console");
       Rcs::KeyCatcherBase::registerKey("n", "Reset");
 
-      int algo = 1;
+      int algo = 1, nTests = -1;
       unsigned int loopCount = 0, nIter = 10000;
-      double alpha = 0.01;
-      double lambda = 1.0e-8;
+      double alpha = 0.01, lambda = 1.0e-8;
       double jlCost = 0.0, dJlCost = 0.0, eps=1.0e-5;
       strcpy(xmlFileName, "cAction.xml");
       strcpy(directory, "config/xml/DexBot");
 
       argP.getArgument("-iter", &nIter, "Number of iterations before next pose"
                        "(default is %u)", nIter);
+      argP.getArgument("-nTests", &nTests, "Number of test iterations (default"
+                       " is %d)", nTests);
       argP.getArgument("-algo", &algo, "IK algorithm: 0: left inverse, 1: "
                        "right inverse (default is %d)", algo);
       argP.getArgument("-alpha", &alpha,
@@ -2289,16 +2440,13 @@ int main(int argc, char** argv)
         v->add(hud);
         v->add(kc);
         v->add(dragger);
-        v->setCameraHomePosition(osg::Vec3d(2.5,  1.0, 1.8),
-                                 osg::Vec3d(0.0, -0.2, 0.8),
-                                 osg::Vec3d(0.0, 0.05, 1.0));
         v->runInThread(mtx);
 
         // Launch the activation widget
         std::vector<std::string> labels;
-        MatNdWidget* mw = MatNdWidget::create(a_des, a_des,
-                                              0.0, 1.0, "activation",
-                                              &graphLock);
+        Rcs::MatNdWidget* mw = Rcs::MatNdWidget::create(a_des, a_des,
+                                                        0.0, 1.0, "activation",
+                                                        &graphLock);
         for (size_t id=0; id<controller.getNumberOfTasks(); id++)
         {
           labels.push_back(controller.getTaskName(id));
@@ -2572,9 +2720,9 @@ int main(int argc, char** argv)
         else
         {
           // Launch the task widget
-          MatNdWidget* mw = MatNdWidget::create(xpp_des, x_curr,
-                                                -1000.0, 1000.0, "xpp_des",
-                                                mtx);
+          Rcs::MatNdWidget* mw = Rcs::MatNdWidget::create(xpp_des, x_curr,
+                                                          -1000.0, 1000.0, "xpp_des",
+                                                          mtx);
 
           std::vector<std::string> labels;
           for (size_t id=0; id<controller.getNumberOfTasks(); id++)
@@ -2582,14 +2730,14 @@ int main(int argc, char** argv)
             for (unsigned int j=0; j<controller.getTaskDim(id); j++)
               labels.push_back(controller.getTaskName(id) +
                                std::string(": ") +
-                               controller.getTask(id)->getParameter(j)->name);
+                               controller.getTask(id)->getParameter(j).name);
           }
 
           mw->setLabels(labels);
 
-          mw = MatNdWidget::create(a_des, a_des,
-                                   0.0, 1.0, "activation",
-                                   &graphLock);
+          mw = Rcs::MatNdWidget::create(a_des, a_des,
+                                        0.0, 1.0, "activation",
+                                        &graphLock);
           labels.clear();
           for (size_t id=0; id<controller.getNumberOfTasks(); id++)
           {
@@ -2763,197 +2911,6 @@ int main(int argc, char** argv)
     }
 
     // ==============================================================
-    // MatNdWidget test
-    // ==============================================================
-    case 9:
-    {
-      unsigned int rows = 10, cols = 1;
-      argP.getArgument("-rows", &rows, "Rows (default is %u)", rows);
-      argP.getArgument("-cols", &cols, "Columns (default is %u)", cols);
-
-      if (argP.hasArgument("-h"))
-      {
-        RMSG("Mode %d: Rcs -m %d\n", mode, mode);
-        printf("\n\tMatNdWidget test\n");
-        break;
-      }
-
-      MatNd* mat = MatNd_create(rows,cols);
-      MatNd_setRandom(mat, -1.0, 1.0);
-      MatNdWidget::create(mat, NULL, mtx);
-
-      while (runLoop==true)
-      {
-        pthread_mutex_lock(&graphLock);
-        MatNd_printCommentDigits("mat", mat, 4);
-        pthread_mutex_unlock(&graphLock);
-        Timer_usleep(1000);
-      }
-
-      MatNd_destroy(mat);
-      break;
-    }
-
-    // ==============================================================
-    // Distance function test
-    // ==============================================================
-    case 12:
-    {
-      int shapeType1 = RCSSHAPE_SSL;
-      int shapeType2 = RCSSHAPE_SSL;
-      char textLine[2056] = "";
-
-      argP.getArgument("-t1", &shapeType1, "Shape type for shape 1");
-      argP.getArgument("-t2", &shapeType2, "Shape type for shape 2");
-
-      if (argP.hasArgument("-h"))
-      {
-        RcsShape_fprintDistanceFunctions(stdout);
-        break;
-      }
-
-      RcsBody* b1 = RALLOC(RcsBody);
-      b1->A_BI = HTr_create();
-      b1->Inertia = HTr_create();
-      Vec3d_setRandom(b1->A_BI->org, -0.2, -0.1);
-      b1->shape = RNALLOC(2, RcsShape*);
-      b1->shape[0] = RcsShape_createRandomShape(shapeType1);
-      RCHECK(b1->shape[0]);
-      b1->shape[1] = NULL;
-
-      RcsBody* b2 = RALLOC(RcsBody);
-      b2->A_BI = HTr_create();
-      b2->Inertia = HTr_create();
-      Vec3d_setRandom(b1->A_BI->org, 0.1, 0.2);
-      b2->shape = RNALLOC(2, RcsShape*);
-      b2->shape[0] = RcsShape_createRandomShape(shapeType2);
-      RCHECK(b2->shape[0]);
-      b2->shape[1] = NULL;
-
-      double I_closestPts[6];
-      VecNd_setZero(I_closestPts, 6);
-      double* cp0 = &I_closestPts[0];
-      double* cp1 = &I_closestPts[3];
-      double n01[3];
-      Vec3d_set(n01, 0.0, 0.0, 0.25);
-
-      // Graphics
-      Rcs::HUD* hud = NULL;
-      Rcs::Viewer* viewer = NULL;
-      Rcs::KeyCatcher* kc = NULL;
-
-      if (!valgrind)
-      {
-        viewer = new Rcs::Viewer(!simpleGraphics, !simpleGraphics);
-
-        // HUD
-        hud = new Rcs::HUD();
-        viewer->add(hud);
-
-        // BodyNodes
-        Rcs::BodyNode* bNd1 = new Rcs::BodyNode(b1);
-        Rcs::BodyNode* bNd2 = new Rcs::BodyNode(b2);
-        bNd1->setGhostMode(true, "RED");
-        bNd2->setGhostMode(true, "GREEN");
-        viewer->add(bNd1);
-        viewer->add(bNd2);
-
-        // TargetSetters
-        bool sphTracker = b1->shape[0]->type==RCSSHAPE_POINT ? false : true;
-        Rcs::TargetSetter* ts1 =
-          new Rcs::TargetSetter(b1->A_BI->org, b1->A_BI->rot, 0.5, sphTracker);
-        viewer->add(ts1);
-        viewer->add(ts1->getHandler());
-        sphTracker = b2->shape[0]->type==RCSSHAPE_POINT ? false : true;
-        Rcs::TargetSetter* ts2 =
-          new Rcs::TargetSetter(b2->A_BI->org, b2->A_BI->rot, 0.5, sphTracker);
-        viewer->add(ts2);
-        viewer->add(ts2->getHandler());
-
-        // VertexArrayNode for distance
-        Rcs::VertexArrayNode* cpLine =
-          new Rcs::VertexArrayNode(I_closestPts, 2);
-        cpLine->setColor("GREEN");
-        cpLine->setPointSize(2.0);
-        viewer->add(cpLine);
-
-        Rcs::CapsuleNode* sphereCP0 =
-          new Rcs::CapsuleNode(cp0, NULL, 0.015, 0.0);
-        sphereCP0->makeDynamic(cp0);
-        sphereCP0->setMaterial("RED");
-        viewer->add(sphereCP0);
-
-        Rcs::CapsuleNode* sphereCP1 =
-          new Rcs::CapsuleNode(cp1, NULL, 0.015, 0.0);
-        sphereCP1->makeDynamic(cp1);
-        sphereCP1->setMaterial("RED");
-        viewer->add(sphereCP1);
-
-        // ArrowNode for normal vector
-        Rcs::ArrowNode* normalArrow = new Rcs::ArrowNode(cp0, n01, 0.2);
-        viewer->add(normalArrow);
-
-        // KeyCatcher
-        kc = new Rcs::KeyCatcher();
-        viewer->add(kc);
-        viewer->runInThread(mtx);
-      }
-
-
-      while (runLoop)
-      {
-        pthread_mutex_lock(&graphLock);
-        double dt = Timer_getTime();
-        double dist;
-
-        dist = RcsShape_distance(b1->shape[0], b2->shape[0],
-                                 b1->A_BI, b2->A_BI, cp0, cp1, n01);
-
-        dt = Timer_getTime() - dt;
-        pthread_mutex_unlock(&graphLock);
-
-        std::stringstream hudText;
-        sprintf(textLine, "Distance: D = % 3.1f mm took %3.2f usec\n",
-                dist*1000.0, dt*1.0e6);
-        hudText << textLine;
-        if (hud)
-        {
-          hud->setText(hudText);
-        }
-        else
-        {
-          std::cout << hudText.str();
-        }
-
-        if (kc && kc->getAndResetKey('q'))
-        {
-          runLoop = false;
-        }
-
-        Timer_usleep(1000);
-        RPAUSE_DL(4);
-
-        if (valgrind)
-        {
-          runLoop = false;
-        }
-
-      } // while runLoop
-
-
-      // Clean up
-      RcsBody_destroy(b1);
-      RcsBody_destroy(b2);
-
-      if (viewer)
-      {
-        delete viewer;
-      }
-
-      break;
-    }
-
-    // ==============================================================
     // Depth first traversal test
     // ==============================================================
     case 13:
@@ -3089,8 +3046,8 @@ int main(int argc, char** argv)
         leafNode = BODY;
       }
 
-      MatNdWidget::create(invW, invW, 0.0, 1.0, "weighting");
-      MatNdWidget::create(T, T, 0.0, 1.0, "torque");
+      Rcs::MatNdWidget::create(invW, invW, 0.0, 1.0, "weighting");
+      Rcs::MatNdWidget::create(T, T, 0.0, 1.0, "torque");
 
       RcsGraph_worldPointJacobian(graph, leafNode, Vec3d_ez(), NULL, J);
 
@@ -3193,76 +3150,32 @@ int main(int argc, char** argv)
     }
 
     // ==============================================================
-    // 2D convex polygon
+    // Task from string test
     // ==============================================================
     case 17:
     {
-      double radius = 0.25;
-      double height = 1.0;
-      argP.getArgument("-radius", &radius, "Radius (default is %g)", radius);
-      argP.getArgument("-height", &height, "Height (default is %g)", height);
+      strcpy(xmlFileName, "gScenario.xml");
+      strcpy(directory, "config/xml/DexBot");
+      Rcs_addResourcePath(directory);
 
-      double poly[5][2];
-      poly[0][0] = -radius;
-      poly[0][1] = -0.5*height;
-      poly[1][0] =  radius;
-      poly[1][1] = -0.5*height;
-      poly[2][0] =  radius;
-      poly[2][1] =  0.5*height;
-      poly[3][0] = -radius;
-      poly[3][1] =  0.5*height;
-      poly[4][0] = -radius;
-      poly[4][1] = -0.5*height;
-      MatNd polyArr = MatNd_fromPtr(5, 2, &poly[0][0]);
+      RcsGraph* graph = RcsGraph_create(xmlFileName);
+      RCHECK(graph);
 
-      Rcs::VertexArrayNode* vn =
-        new Rcs::VertexArrayNode(&polyArr, osg::PrimitiveSet::LINE_STRIP);
+      const char* descr =
+        "<Task controlVariable=\"XYZ\" effector=\"PowerGrasp_L\" />";
 
-      Rcs::Viewer* viewer = new Rcs::Viewer(!simpleGraphics, !simpleGraphics);
-      viewer->add(vn);
+      Rcs::Task* task = Rcs::TaskFactory::createTask(descr, graph);
 
-      double pt[3], ang[3], Id[3][3];
-      Mat3d_setIdentity(Id);
-      Vec3d_setZero(ang);
-      Vec3d_setZero(pt);
-      Rcs::TargetSetter* ts = new Rcs::TargetSetter(pt, ang, 0.5, false);
-      viewer->add(ts);
-
-      Rcs::CapsuleNode* pn = new Rcs::CapsuleNode(pt, Id, 0.025, 0.0);
-      pn->setMaterial("GREEN");
-      pn->makeDynamic(pt);
-      pn->setWireframe(false);
-      viewer->add(pn);
-
-      double cpPoly[3], nPoly[3];
-      Vec3d_setZero(cpPoly);
-      Vec3d_setZero(nPoly);
-      Rcs::CapsuleNode* cn = new Rcs::CapsuleNode(cpPoly, Id, 0.025, 0.0);
-      cn->makeDynamic(cpPoly);
-      cn->setMaterial("RED");
-      cn->setWireframe(false);
-      viewer->add(cn);
-
-      Rcs::ArrowNode* an = new Rcs::ArrowNode(cpPoly, nPoly, 0.2);
-      viewer->add(an);
-
-
-      char hudText[512] = "";
-      Rcs::HUD* hud = new Rcs::HUD();
-      viewer->add(hud);
-
-      viewer->runInThread(mtx);
-
-      while (runLoop)
+      if (task == NULL)
       {
-        pthread_mutex_lock(&graphLock);
-        double d = Math_distPointConvexPolygon2D(pt, poly, 4, cpPoly, nPoly);
-        sprintf(hudText, "d = %f", d);
-        hud->setText(hudText);
-        pthread_mutex_unlock(&graphLock);
-        Timer_waitDT(0.01);
+        RLOG(0, "Can't create task \n\n%s\n\n", descr);
+        RcsGraph_destroy(graph);
+        break;
       }
 
+      task->print();
+      delete task;
+      RcsGraph_destroy(graph);
       break;
     }
 
@@ -3293,14 +3206,12 @@ int main(int argc, char** argv)
   // before calling exit() to avoid leak reports from valgrind !
   xmlCleanupParser();
 
-  fprintf(stderr, "Thanks for using the Rcs libraries\n");
+  pthread_mutex_destroy(&graphLock);
 
-#if defined (_MSC_VER)
-  if ((mode==0) || argP.hasArgument("-h"))
+  if (!valgrind)
   {
-    RPAUSE();
+    RLOG(0, "Thanks for using the Rcs libraries\n");
   }
-#endif
 
-  return 0;
+  return Math_iClip(result, 0, 255);
 }

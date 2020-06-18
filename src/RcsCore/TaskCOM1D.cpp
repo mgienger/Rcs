@@ -38,7 +38,6 @@
 #include "TaskFactory.h"
 #include "Rcs_typedef.h"
 #include "Rcs_macros.h"
-#include "Rcs_parser.h"
 #include "Rcs_utils.h"
 
 
@@ -55,24 +54,23 @@ Rcs::TaskCOM1D::TaskCOM1D(const std::string& className,
                           xmlNode* node,
                           RcsGraph* _graph,
                           int dim):
-  Rcs::TaskCOM3D(className, node, _graph, dim),
-  index(0)
+  Rcs::TaskCOM3D(className, node, _graph, dim), index(0)
 {
 
   if (className=="COGX")
   {
     this->index = 0;
-    getParameter(0)->name.assign("X Position [m]");
+    resetParameter(Parameters(-2.5, 2.5, 1.0, "X Position [m]"));
   }
   else if (className=="COGY")
   {
     this->index = 1;
-    getParameter(0)->name.assign("Y Position [m]");
+    resetParameter(Parameters(-2.5, 2.5, 1.0, "Y Position [m]"));
   }
   else if (className=="COGZ")
   {
     this->index = 2;
-    getParameter(0)->name.assign("Z Position [m]");
+    resetParameter(Parameters(-2.5, 2.5, 1.0, "Z Position [m]"));
   }
 
 }
@@ -145,7 +143,7 @@ void Rcs::TaskCOM1D::computeH(MatNd* hessian) const
 }
 
 /*******************************************************************************
- * This task is always valid.
+ *
  ******************************************************************************/
 bool Rcs::TaskCOM1D::isValid(xmlNode* node, const RcsGraph* graph)
 {

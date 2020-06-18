@@ -47,6 +47,9 @@
 
 
 
+namespace Rcs
+{
+
 /*! \ingroup RcsGraphics
  * \brief Mouse spring: When the shift-key is pressed, clicking the left
  *        mouse button will make the 3d point of the BodyNode under the mouse
@@ -57,17 +60,12 @@
  *
  *        All public functions are thread-safe, protected by the mutex _mtx.
  */
-
-namespace Rcs
-{
-
 class MouseDragger: public osg::Switch
 {
   friend class MouseDraggerHandler;
 public:
 
-  /*!
-   *  \brief Default constructor.
+  /*! \brief Default constructor.
    */
   MouseDragger();
 
@@ -176,10 +174,10 @@ public:
   *          in the bodies frame of reference. If no body is found under the
   *          mouse pointer, the mouse coordinates are left unchanged.
   */
-  static const RcsBody* getBodyUnderMouse(const osgGA::GUIEventAdapter& ea,
-                                          osgGA::GUIActionAdapter& aa,
-                                          double I_pt[3]=NULL,
-                                          double k_pt[3]=NULL);
+  virtual const RcsBody* getBodyUnderMouse(const osgGA::GUIEventAdapter& ea,
+                                           osgGA::GUIActionAdapter& aa,
+                                           double I_pt[3]=NULL,
+                                           double k_pt[3]=NULL);
 
 protected:
 
@@ -187,6 +185,11 @@ protected:
    *         classes. It is called with a locked mutex in each frame.
    */
   virtual void update();
+
+  /*! \brief Updates the world mouse point based on the bodie's transformation.
+   *         This function uses the graph's transformation.
+   */
+  virtual void updateWorldAnchor();
 
   /*! \brief Handles the Gui events, e.g. memorizes which button has been
    *         pressed, and which body is currently being tracked.

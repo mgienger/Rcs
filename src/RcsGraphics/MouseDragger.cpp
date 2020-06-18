@@ -109,6 +109,7 @@ Rcs::MouseDragger::MouseDragger() : osg::Switch(),
   _LMBPressed(false),
   _RMBPressed(false)
 {
+  setName("MouseDragger");
   KeyCatcherBase::registerKey("Left Shift", "Enable body dragging", "MouseDragger");
   KeyCatcherBase::registerKey("Left Cntrl", "Amplify force dragging", "MouseDragger");
 
@@ -296,7 +297,8 @@ bool Rcs::MouseDragger::callback(const osgGA::GUIEventAdapter& ea,
     {
       if (_draggedBody)
       {
-        Vec3d_transform(_I_anchor, _draggedBody->A_BI, _k_anchor);
+        updateWorldAnchor();
+
         if (_LMBPressed)
         {
           (*_vertices)[0].set(_I_anchor[0], _I_anchor[1], _I_anchor[2]);
@@ -323,6 +325,14 @@ bool Rcs::MouseDragger::callback(const osgGA::GUIEventAdapter& ea,
  *****************************************************************************/
 void Rcs::MouseDragger::update()
 {
+}
+
+/******************************************************************************
+ * Computes the world anchor point of the mouse tip.
+ *****************************************************************************/
+void Rcs::MouseDragger::updateWorldAnchor()
+{
+  Vec3d_transform(_I_anchor, _draggedBody->A_BI, _k_anchor);
 }
 
 /******************************************************************************

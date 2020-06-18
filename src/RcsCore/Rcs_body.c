@@ -510,6 +510,7 @@ void RcsBody_copy(RcsBody* dst, const RcsBody* src)
   dst->physicsSim = src->physicsSim;
   Vec3d_copy(dst->x_dot, src->x_dot);
   Vec3d_copy(dst->omega, src->omega);
+  dst->confidence = src->confidence;
 
   String_copyOrRecreate(&dst->name, src->name);
   String_copyOrRecreate(&dst->xmlName, src->xmlName);
@@ -816,16 +817,26 @@ void RcsBody_fprint(FILE* out, const RcsBody* b)
       fprintf(out, "\tphysics=\"unknown\" (%d)\n", b->physicsSim);
   }
 
+  // Velocities
+  fprintf(out, "\n\tx_dot: %f %f %f\n", b->x_dot[0], b->x_dot[2], b->x_dot[2]);
+  fprintf(out, "\n\tomega: %f %f %f\n", b->omega[0], b->omega[2], b->omega[2]);
+
+  // Confidence
+  fprintf(out, "\n\tConfidence: %f\n", b->confidence);
+
   // Absolute transformation
   fprintf(out, "\n\tAbsolute transformation:\n");
   HTr_fprint(out, b->A_BI);
+  double ea[3];
+  Mat3d_toEulerAngles(ea, b->A_BI->rot);
+  fprintf(out, "\n\tEuler angles:%f %f %f [deg]\n",
+          RCS_RAD2DEG(ea[0]), RCS_RAD2DEG(ea[1]), RCS_RAD2DEG(ea[2]));
 
   // Relative transformation
   fprintf(out, "\n\tRelative transformation:\n");
   if (b->A_BP)
   {
     HTr_fprint(out, b->A_BP);
-    double ea[3];
     Mat3d_toEulerAngles(ea, b->A_BP->rot);
     fprintf(out, "\n\tEuler angles:%f %f %f [deg]\n",
             RCS_RAD2DEG(ea[0]), RCS_RAD2DEG(ea[1]), RCS_RAD2DEG(ea[2]));
@@ -1183,7 +1194,7 @@ void RcsBody_distanceGradient(const RcsGraph* self,
     RLOG(4, "Closest points of bodies \"%s\" and \"%s\" coincide - assuming "
          "distance gradient to be zero", b1 ? b1->name : "NULL",
          b2 ? b2->name : "NULL");
-    MatNd_reshapeAndSetZero(dDdq, self->nJ, 1);
+    MatNd_reshapeAndSetZero(dDdq, 1, self->nJ);
     MatNd_destroy(J1);
     MatNd_destroy(J2);
     return;
@@ -1193,6 +1204,7 @@ void RcsBody_distanceGradient(const RcsGraph* self,
   MatNd arr_dp = MatNd_fromPtr(3, 1, dp);
   MatNd_reshape(dDdq, self->nJ, 1);
   MatNd_mul(dDdq, J1, &arr_dp);
+  MatNd_reshape(dDdq, 1, self->nJ);
 
   // Apply individual weighting factors per joint
   RCSGRAPH_TRAVERSE_JOINTS(self)
@@ -1716,7 +1728,7 @@ RcsJoint* RcsBody_lastJointBeforeBody(const RcsBody* body)
 RcsJoint* RcsBody_createRBJ(RcsGraph* self, RcsBody* b, const double q_rbj[6])
 {
   int indexOrdering[6];
-  for (int i=0;i<6;++i)
+  for (int i=0; i<6; ++i)
   {
     indexOrdering[i] = i;
   }
@@ -2452,19 +2464,58 @@ bool RcsBody_boxify(RcsBody* self, int computeType)
 void RcsBody_scale(RcsBody* bdy, double scale)
 {
   if (bdy->A_BP)
-    {
-      Vec3d_constMulSelf(bdy->A_BP->org, scale);
-    }
+  {
+    Vec3d_constMulSelf(bdy->A_BP->org, scale);
+  }
 
   RCSBODY_TRAVERSE_JOINTS(bdy)
-    {
-      RcsJoint_scale(JNT, scale);
-    }
+  {
+    RcsJoint_scale(JNT, scale);
+  }
 
   RCSBODY_TRAVERSE_SHAPES(bdy)
-    {
-      RcsShape_scale(SHAPE, scale);
-    }
+  {
+    RcsShape_scale(SHAPE, scale);
+  }
 
 }
 
+/*******************************************************************************
+ *
+ ******************************************************************************/
+int RcsBody_getNumDistanceQueries(const RcsBody* b1, const RcsBody* b2)
+{
+  int fcnCount = 0;
+  RcsShape** sh1Ptr = &b1->shape[0];
+  RcsShape** sh2Ptr = &b2->shape[0];
+
+  // Traverse all shapes of the 1st body
+  while (*sh1Ptr)
+  {
+    if (((*sh1Ptr)->computeType & RCSSHAPE_COMPUTE_DISTANCE) == 0)
+    {
+      sh1Ptr++;
+      continue;
+    }
+
+    // Traverse all shapes of the 2nd body
+    while (*sh2Ptr)
+    {
+      if (((*sh2Ptr)->computeType & RCSSHAPE_COMPUTE_DISTANCE) == 0)
+      {
+        sh2Ptr++;
+        continue;
+      }
+
+      // Compute the closest distance via function table lookup
+      fcnCount++;
+      sh2Ptr++;
+    }   // while(*sh2Ptr)
+
+    sh1Ptr++;
+    sh2Ptr = &b2->shape[0];   // Reset the 2nd shape pointer
+
+  }   // while(*sh1Ptr)
+
+  return fcnCount;
+}

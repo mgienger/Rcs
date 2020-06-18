@@ -48,7 +48,7 @@ static Rcs::TaskFactoryRegistrar<Rcs::TaskEuler3D> registrar("ABC");
 
 
 /*******************************************************************************
- * Constructor based on xml parsing
+ *
  ******************************************************************************/
 Rcs::TaskEuler3D::TaskEuler3D(const std::string& className_,
                               xmlNode* node,
@@ -56,16 +56,16 @@ Rcs::TaskEuler3D::TaskEuler3D(const std::string& className_,
                               int dim):
   Rcs::Task(className_, node, _graph, dim)
 {
-  if (getDim() == 3)
+  if (getClassName()=="ABC")
   {
-    getParameter(0)->setParameters(-M_PI, M_PI, (180.0/M_PI), "A [deg]");
-    getParameter(1)->setParameters(-M_PI, M_PI, (180.0/M_PI), "B [deg]");
-    getParameter(2)->setParameters(-M_PI, M_PI, (180.0/M_PI), "C [deg]");
+    resetParameter(Task::Parameters(-M_PI, M_PI, (180.0/M_PI), "A [deg]"));
+    addParameter(Task::Parameters(-M_PI, M_PI, (180.0/M_PI), "B [deg]"));
+    addParameter(Task::Parameters(-M_PI, M_PI, (180.0/M_PI), "C [deg]"));
   }
 }
 
 /*******************************************************************************
- * Copy constructor doing deep copying
+ *
  ******************************************************************************/
 Rcs::TaskEuler3D::TaskEuler3D(const TaskEuler3D& copyFromMe,
                               RcsGraph* newGraph):
@@ -74,7 +74,7 @@ Rcs::TaskEuler3D::TaskEuler3D(const TaskEuler3D& copyFromMe,
 }
 
 /*******************************************************************************
- * Constructor based on body pointers
+ *
  ******************************************************************************/
 Rcs::TaskEuler3D::TaskEuler3D(RcsGraph* graph_,
                               const RcsBody* effector,
@@ -87,22 +87,20 @@ Rcs::TaskEuler3D::TaskEuler3D(RcsGraph* graph_,
   setEffector(effector);
   setRefBody(refBdy);
   setRefFrame(refFrame ? refFrame : refBdy);
-  std::vector<Parameters*>& params = getParameters();
-  params.clear();/// \todo: Memory leak when derieved class calls this
-  params.push_back(new Task::Parameters(-M_PI, M_PI, (180.0/M_PI), "A [deg]"));
-  params.push_back(new Task::Parameters(-M_PI, M_PI, (180.0/M_PI), "B [deg]"));
-  params.push_back(new Task::Parameters(-M_PI, M_PI, (180.0/M_PI), "C [deg]"));
+  resetParameter(Task::Parameters(-M_PI, M_PI, (180.0/M_PI), "A [deg]"));
+  addParameter(Task::Parameters(-M_PI, M_PI, (180.0/M_PI), "B [deg]"));
+  addParameter(Task::Parameters(-M_PI, M_PI, (180.0/M_PI), "C [deg]"));
 }
 
 /*******************************************************************************
- * Destructor
+ *
  ******************************************************************************/
 Rcs::TaskEuler3D::~TaskEuler3D()
 {
 }
 
 /*******************************************************************************
- * Clone function
+ *
  ******************************************************************************/
 Rcs::TaskEuler3D* Rcs::TaskEuler3D::clone(RcsGraph* newGraph) const
 {
@@ -110,7 +108,7 @@ Rcs::TaskEuler3D* Rcs::TaskEuler3D::clone(RcsGraph* newGraph) const
 }
 
 /*******************************************************************************
- * Computes the current value of the task variable: XYZ Euler angles
+ * Computes the XYZ Euler angles
  ******************************************************************************/
 void Rcs::TaskEuler3D::computeX(double* x_res) const
 {
@@ -119,7 +117,7 @@ void Rcs::TaskEuler3D::computeX(double* x_res) const
 
 /*******************************************************************************
  * Computes the current Euler angles velocity. These can get excessively
- * large in sungular configurations.
+ * large in singular configurations.
  ******************************************************************************/
 void Rcs::TaskEuler3D::computeXp(double* eap) const
 {
@@ -131,8 +129,7 @@ void Rcs::TaskEuler3D::computeXp(double* eap) const
 }
 
 /*******************************************************************************
- * Computes the current Euler angles velocity. These can get excessively
- * large in singular configurations.
+ * Computes the current angular velocity with respect to the refBdy
  ******************************************************************************/
 void Rcs::TaskEuler3D::computeXp_ik(double* omega) const
 {

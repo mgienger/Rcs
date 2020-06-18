@@ -1219,12 +1219,14 @@ double MatNd_rmsqError(const MatNd* a1, const MatNd* a2);
 double* MatNd_getRowPtr(const MatNd* self, int row);
 
 /*! \ingroup MatNdFunctions
- *  \brief Rotates a 3xn array about the rotation matrix of A_KI.
+ *  \brief Rotates a 3xn array about the rotation matrix of A_KI:
+ *         self = A_KI*self
  */
 void MatNd_rotateSelf(MatNd* self, double A_KI[3][3]);
 
 /*! \ingroup MatNdFunctions
- *  \brief Rotates a 3xn array about the transpose rotation matrix of A_KI.
+ *  \brief Rotates a 3xn array about the transpose rotation matrix of A_KI:
+ *         self = transpose(A_KI)*self
  */
 void MatNd_invRotateSelf(MatNd* self, double A_KI[3][3]);
 
@@ -1583,7 +1585,11 @@ void MatNd_calcMeanAndCovariance(const MatNd* A, double* mu, MatNd* sigma);
  *         y-values. To fit a line, at least 2 non-coinciding data points
  *         must exist. If the parameters cannot be determined, the
  *         function returns false and leaves A and B unchanged. If
- *         successful, the function returns true.
+ *         successful, the function returns true. The function can deal with
+ *         ill-formed data points, such as lying all on a vertical line.
+ *         Internally, the x- and y-coordinates are then swapped, the
+ *         orthogonal line fir is computed, and the parameters are projected
+ *         back.
  */
 bool MatNd_lineFit2D(double* A, double* B, const MatNd* data);
 

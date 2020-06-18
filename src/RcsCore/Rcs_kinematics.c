@@ -422,8 +422,7 @@ void RcsGraph_rotationJacobian(const RcsGraph* self,
                                MatNd* J)
 {
   // Reset the Jacobian
-  MatNd_reshape(J, 3, self->nJ);
-  MatNd_setZero(J);
+  MatNd_reshapeAndSetZero(J, 3, self->nJ);
 
   // If body is NULL, return a zero-Jacobian
   if (b == NULL)
@@ -484,7 +483,7 @@ void RcsGraph_rotationHessian(const RcsGraph* self,
   // Find last joint of previous body (which has joints)
   RcsJoint* jnt_j = RcsBody_lastJointBeforeBody(b);
 
-  if (!jnt_j)
+  if (jnt_j == NULL)
   {
     return;
   }
@@ -1164,7 +1163,7 @@ double RcsGraph_jointLimitCost(const RcsGraph* self, RcsStateType type)
     if ((range>0.0) && (JNT->constrained==false))
     {
       double qi = MatNd_get(self->q, JNT->jointIndex, 0);
-      cost += JNT->weightJL * pow((qi - JNT->q0) / range , 2);
+      cost += JNT->weightJL * pow((qi - JNT->q0) / range, 2);
     }
   }
 
@@ -1502,27 +1501,21 @@ double RcsGraph_jointLimitGradient(const RcsGraph* self,
                                    RcsStateType type)
 {
   double cost = 0.0;
-  int dimension = (type == RcsStateFull ? self->dof : self->nJ);
-
-  MatNd_reshape(dH, 1, dimension);
-  MatNd_setZero(dH);
+  const int dimension = (type == RcsStateFull ? self->dof : self->nJ);
+  MatNd_reshapeAndSetZero(dH, 1, dimension);
 
   RCSGRAPH_TRAVERSE_JOINTS(self)
   {
-    if ((JNT->constrained==true) && (type == RcsStateIK))
-    {
-      continue;
-    }
+    const double range = JNT->q_max - JNT->q_min;
 
-    double qi = MatNd_get(self->q, JNT->jointIndex, 0);
-    int index = (type == RcsStateIK) ? JNT->jacobiIndex : JNT->jointIndex;
-    double range = JNT->q_max - JNT->q_min;
-    double delta = qi - JNT->q0;
-
-    if ((range > 0.0) && (JNT->jacobiIndex != -1))
+    // Joints with constraint or zero range don't contribute to the gradient.
+    if ((JNT->jacobiIndex != -1) && (range > 0.0))
     {
-      dH->ele[index] = JNT->weightJL * delta / (range * range);
-      cost += JNT->weightJL * pow(delta / range , 2);
+      const double qi = MatNd_get2(self->q, JNT->jointIndex, 0);
+      const double delta = qi - JNT->q0;
+      const int idx = (type==RcsStateIK) ? JNT->jacobiIndex : JNT->jointIndex;
+      dH->ele[idx] = JNT->weightJL * delta / (range * range);
+      cost += JNT->weightJL * pow(delta / range, 2);
     }
   }
 
@@ -1575,12 +1568,12 @@ double RcsGraph_jointLimitGradientPlateau(const RcsGraph* self,
       if (qi < lower_threshold)
       {
         dH->ele[index] = JNT->weightJL * (qi - lower_threshold) / (border_size * border_size);
-        cost += JNT->weightJL * pow((qi - lower_threshold) / border_size , 2);
+        cost += JNT->weightJL * pow((qi - lower_threshold) / border_size, 2);
       }
       else if (qi > upper_threshold)
       {
         dH->ele[index] = JNT->weightJL * (qi - upper_threshold) / (border_size * border_size);
-        cost += JNT->weightJL * pow((qi - upper_threshold) / border_size , 2);
+        cost += JNT->weightJL * pow((qi - upper_threshold) / border_size, 2);
       }
     }
   }

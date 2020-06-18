@@ -175,12 +175,13 @@ RcsMeshData* RcsShape_createMesh(const RcsShape* self)
   {
     case RCSSHAPE_SSL:
     {
-      mesh = RcsMesh_createCapsule(self->extents[0], self->extents[2], segments);
+      mesh = RcsMesh_createCapsule(self->extents[0], self->extents[2],
+                                   segments/2);
       break;
     }
     case RCSSHAPE_SSR:
     {
-      mesh = RcsMesh_createSSR(self->extents, segments);
+      mesh = RcsMesh_createSSR(self->extents, segments/4);
       break;
     }
     case RCSSHAPE_MESH:
@@ -195,12 +196,13 @@ RcsMeshData* RcsShape_createMesh(const RcsShape* self)
     }
     case RCSSHAPE_CYLINDER:
     {
-      mesh = RcsMesh_createCylinder(self->extents[0], self->extents[2], segments);
+      mesh = RcsMesh_createCylinder(self->extents[0], self->extents[2],
+                                    segments);
       break;
     }
     case RCSSHAPE_SPHERE:
     {
-      mesh = RcsMesh_createSphere(self->extents[0], segments);
+      mesh = RcsMesh_createSphere(self->extents[0], segments/2);
       break;
     }
     case RCSSHAPE_CONE:
@@ -210,7 +212,8 @@ RcsMeshData* RcsShape_createMesh(const RcsShape* self)
     }
     case RCSSHAPE_TORUS:
     {
-      mesh = RcsMesh_createTorus(self->extents[0], self->extents[2], segments, segments);
+      mesh = RcsMesh_createTorus(self->extents[0], self->extents[2],
+                                 segments, segments);
       break;
     }
     default:
@@ -237,7 +240,7 @@ void RcsShape_computeLocalCOM(const RcsShape* self, double r_com[3])
     case RCSSHAPE_SSL:
     {
       double c_offs[3], b_offs[3];
-      Vec3d_set(c_offs, 0.0 , 0.0 , 0.5*self->extents[2]);
+      Vec3d_set(c_offs, 0.0, 0.0, 0.5*self->extents[2]);
       Vec3d_transRotate(b_offs, (double(*)[3]) self->A_CB.rot, c_offs);
       Vec3d_add(r_com, self->A_CB.org, b_offs);
       break;
@@ -247,7 +250,7 @@ void RcsShape_computeLocalCOM(const RcsShape* self, double r_com[3])
     case RCSSHAPE_CONE:
     {
       double c_offs[3], b_offs[3];
-      Vec3d_set(c_offs, 0.0 , 0.0 , 0.25*self->extents[2]);
+      Vec3d_set(c_offs, 0.0, 0.0, 0.25*self->extents[2]);
       Vec3d_transRotate(b_offs, (double(*)[3]) self->A_CB.rot, c_offs);
       Vec3d_add(r_com, self->A_CB.org, b_offs);
       break;
@@ -475,7 +478,9 @@ double RcsShape_boundingSphereDistance(const double Pt[3],
     }
     case RCSSHAPE_CYLINDER:
     {
-      return Vec3d_distance(com, Pt) - sqrt(shape->extents[2]*shape->extents[2]/4. + shape->extents[0]*shape->extents[0]);
+      return Vec3d_distance(com, Pt) -
+             sqrt(shape->extents[2]*shape->extents[2]/4.0 +
+                  shape->extents[0]*shape->extents[0]);
     }
     case RCSSHAPE_SPHERE:
     {
@@ -483,11 +488,16 @@ double RcsShape_boundingSphereDistance(const double Pt[3],
     }
     case RCSSHAPE_CONE:
     {
-      return Vec3d_distance(com, Pt) - fmax(0.75*shape->extents[2], sqrt(shape->extents[2]*shape->extents[2]/16.0 + shape->extents[0]*shape->extents[0]));
+      return Vec3d_distance(com, Pt) -
+             fmax(0.75*shape->extents[2],
+                  sqrt(shape->extents[2]*shape->extents[2]/16.0 +
+                       shape->extents[0]*shape->extents[0]));
     }
     case RCSSHAPE_SSR:
     {
-      return Vec3d_distance(com, Pt) - sqrt(shape->extents[0]*shape->extents[0] + shape->extents[1]*shape->extents[1])/2.0 - shape->extents[2]/2.0;
+      return Vec3d_distance(com, Pt) -
+             sqrt(shape->extents[0]*shape->extents[0] +
+                  shape->extents[1]*shape->extents[1])/2.0 - shape->extents[2]/2.0;
     }
     case RCSSHAPE_TORUS:
     {
@@ -745,7 +755,8 @@ void RcsShape_fprint(FILE* out, const RcsShape* s)
 
   // File names
   fprintf(out, "\tmeshFile   : \"%s\"\n", s->meshFile ? s->meshFile : "NULL");
-  fprintf(out, "\ttextureFile: \"%s\"\n", s->textureFile ? s->textureFile : "NULL");
+  fprintf(out, "\ttextureFile: \"%s\"\n",
+          s->textureFile ? s->textureFile : "NULL");
   fprintf(out, "\tcolor      : \"%s\"\n", s->color ? s->color : "NULL");
   fprintf(out, "\tmaterial   : \"%s\"\n", s->material ? s->material : "NULL");
 
@@ -830,17 +841,21 @@ void RcsShape_fprintXML(FILE* out, const RcsShape* self)
     case RCSSHAPE_CYLINDER:
     case RCSSHAPE_TORUS:
     case RCSSHAPE_CONE:
-      fprintf(out, "length=\"%s\" ", String_fromDouble(buf, self->extents[2], 6));
-      fprintf(out, "radius=\"%s\" ", String_fromDouble(buf, self->extents[0], 6));
+      fprintf(out, "length=\"%s\" ",
+              String_fromDouble(buf, self->extents[2], 6));
+      fprintf(out, "radius=\"%s\" ",
+              String_fromDouble(buf, self->extents[0], 6));
       break;
 
     case RCSSHAPE_SPHERE:
-      fprintf(out, "radius=\"%s\" ", String_fromDouble(buf, self->extents[0], 6));
+      fprintf(out, "radius=\"%s\" ",
+              String_fromDouble(buf, self->extents[0], 6));
       break;
 
     case RCSSHAPE_SSR:
     case RCSSHAPE_BOX:
-      fprintf(out, "extents=\"%s ", String_fromDouble(buf, self->extents[0], 6));
+      fprintf(out, "extents=\"%s ",
+              String_fromDouble(buf, self->extents[0], 6));
       fprintf(out, "%s ",   String_fromDouble(buf, self->extents[1], 6));
       fprintf(out, "%s\" ", String_fromDouble(buf, self->extents[2], 6));
       break;
@@ -958,14 +973,8 @@ RcsShape* RcsShape_createRandomShape(int shapeType)
 
   if (shapeType==RCSSHAPE_MESH)
   {
-    const char* sit = getenv("SIT");
-    if (sit!=NULL)
-    {
-      char a[256];
-      snprintf(a, 256, "%s\\Data\\RobotMeshes\\1.0\\data\\Schunk\\schunk_0306925_prl_12010_x.tri", sit);
-      shape->meshFile = String_clone(a);
-      shape->userData = (RcsMeshData*) RcsMesh_createFromFile(shape->meshFile);
-    }
+    shape->meshFile = String_clone("Cylinder");
+    shape->userData = (RcsMeshData*) RcsMesh_createCylinder(0.2, 1.0, 32);
   }
 
   if (shapeType==RCSSHAPE_OCTREE)
@@ -974,7 +983,8 @@ RcsShape* RcsShape_createRandomShape(int shapeType)
     if (sit!=NULL)
     {
       char a[256];
-      snprintf(a, 256, "%s\\Data\\RobotMeshes\\1.0\\data\\Octrees\\octree.bt", sit);
+      snprintf(a, 256, "%s\\Data\\RobotMeshes\\1.0\\data\\Octrees\\octree.bt",
+               sit);
       shape->meshFile = String_clone(a);
       shape->userData = Rcs_loadOctree(shape->meshFile);
     }
@@ -1054,15 +1064,15 @@ static double RcsShape_closestPointToSphere(const RcsShape* pt,
   Vec3d_copy(I_cp1, A_pt->org);
 
   Vec3d_sub(I_n12, A_sp->org, A_pt->org);
-  double sqrDist = Vec3d_normalizeSelf(I_n12);
-  if (sqrDist==0.0)
+  double d = Vec3d_normalizeSelf(I_n12);
+  if (d==0.0)
   {
     Vec3d_setUnitVector(I_n12, 2);
   }
 
   Vec3d_constMulAndAdd(I_cp2, A_sp->org, I_n12, -sp->extents[0]);
 
-  return sqrt(sqrDist)-sp->extents[0];
+  return d-sp->extents[0];
 }
 
 /*******************************************************************************
@@ -1104,7 +1114,8 @@ static double RcsShape_closestSphereToPoint(const RcsShape* sphere,
                                             double I_nSpherePoint[3])
 {
   double dist = RcsShape_closestPointToSphere(point, sphere, A_point, A_sphere,
-                                              I_cpPoint, I_cpSphere, I_nSpherePoint);
+                                              I_cpPoint, I_cpSphere,
+                                              I_nSpherePoint);
 
   // Revert the normal, because we are calling the reverse method
   Vec3d_constMulSelf(I_nSpherePoint, -1.0);
@@ -1196,6 +1207,28 @@ static double RcsShape_closestSphereToSSL(const RcsShape* sphere,
   Vec3d_constMulSelf(I_n, -1.0);
 
   return dist;
+}
+
+/*******************************************************************************
+ * Computes the distance between two SSL shape primitives.
+ ******************************************************************************/
+static double RcsShape_closestSSLToSSL(const RcsShape* ssl1,
+                                       const RcsShape* ssl2,
+                                       const HTr* A_ssl1I,
+                                       const HTr* A_ssl2I,
+                                       double I_cp1[3],
+                                       double I_cp2[3],
+                                       double I_n[3])
+{
+  return Math_distCapsuleCapsule(A_ssl1I->org,
+                                 A_ssl1I->rot[2],
+                                 ssl1->extents[2],
+                                 ssl1->extents[0],
+                                 A_ssl2I->org,
+                                 A_ssl2I->rot[2],
+                                 ssl2->extents[2],
+                                 ssl2->extents[0],
+                                 I_cp1, I_cp2, I_n);
 }
 
 /*******************************************************************************
@@ -1333,15 +1366,24 @@ static double RcsShape_closestSphereToBox(const RcsShape* sphere,
                                           double I_cpBox[3],
                                           double I_nSphBox[3])
 {
-  double dist = Math_distPointBox(A_sphere->org, A_box, box->extents,
-                                  I_cpBox, I_nSphBox);
+  double distBox = Math_distPointBox(A_sphere->org, A_box, box->extents,
+                                     I_cpBox, I_nSphBox);
   Vec3d_constMulSelf(I_nSphBox, -1.0);
   Vec3d_copy(I_cpSph, A_sphere->org);
 
   // Point on sphere surface: cp_sphere = cp_point + radius_sphere*n
   Vec3d_constMulAndAddSelf(I_cpSph, I_nSphBox, sphere->extents[0]);
 
-  return dist - sphere->extents[0];
+  double distSphere = distBox - sphere->extents[0];
+
+  // In case the sphere radius leads to a penetration, we need to revert the
+  // normal direction
+  if ((distSphere < 0.0) && (distBox >= 0.0))
+  {
+    Vec3d_constMulSelf(I_nSphBox, -1.0);
+  }
+
+  return distSphere;
 }
 
 /*******************************************************************************
@@ -1365,6 +1407,54 @@ static double RcsShape_closestBoxToSphere(const RcsShape* box,
 }
 
 /*******************************************************************************
+ * Computes the distance between a point and a SSR.
+ ******************************************************************************/
+static inline double RcsShape_closestPointToSSR(const RcsShape* pt,
+                                                const RcsShape* ssr,
+                                                const HTr* A_ptI,
+                                                const HTr* A_ssrI,
+                                                double I_cpPt[3],
+                                                double I_cpSSR[3],
+                                                double I_nPtSSR[3])
+{
+  double d = Math_sqrDistPointRect(A_ptI->org, A_ssrI, ssr->extents,
+                                   I_cpSSR, I_nPtSSR);
+
+  Vec3d_constMulSelf(I_nPtSSR, -1.0);
+
+  // Surface point
+  const double z = 0.5*ssr->extents[2];
+  for (int i = 0; i < 3; i++)
+  {
+    I_cpSSR[i] -= z*I_nPtSSR[i];
+  }
+
+  Vec3d_copy(I_cpPt, A_ptI->org);
+
+  return sqrt(d) - z;
+}
+
+/*******************************************************************************
+ * SSR to Point distance computation.
+ ******************************************************************************/
+static inline double RcsShape_closestSSRToPoint(const RcsShape* ssr,
+                                                const RcsShape* pt,
+                                                const HTr* A_ssrI,
+                                                const HTr* A_ptI,
+                                                double cpSSR[3],
+                                                double cpPt[3],
+                                                double I_n[3])
+{
+  double dist = RcsShape_closestPointToSSR(pt, ssr, A_ptI, A_ssrI,
+                                           cpPt, cpSSR, I_n);
+
+  // revert the normal, because we are calling the reverse method
+  Vec3d_constMulSelf(I_n, -1.0);
+
+  return dist;
+}
+
+/*******************************************************************************
  * Look-up array for distance functions.
  ******************************************************************************/
 static RcsDistanceFunction
@@ -1382,7 +1472,7 @@ RcsShapeDistFunc[RCSSHAPE_SHAPE_MAX][RCSSHAPE_SHAPE_MAX] =
   // RCSSHAPE_SSL
   {
     RcsShape_noDistance,                // RCSSHAPE_NONE
-    RcsShape_noDistance,                // RCSSHAPE_SSL
+    RcsShape_closestSSLToSSL,           // RCSSHAPE_SSL
     RcsShape_noDistance,                // RCSSHAPE_SSR
     RcsShape_noDistance,                // RCSSHAPE_MESH
     RcsShape_noDistance,                // RCSSHAPE_BOX
@@ -1411,7 +1501,7 @@ RcsShapeDistFunc[RCSSHAPE_SHAPE_MAX][RCSSHAPE_SHAPE_MAX] =
     RcsShape_noDistance,                // RCSSHAPE_GPISF
     RcsShape_noDistance,                // RCSSHAPE_TORUS
     RcsShape_noDistance,                // RCSSHAPE_OCTREE
-    RcsShape_noDistance,                // RCSSHAPE_POINT
+    RcsShape_closestSSRToPoint,         // RCSSHAPE_POINT
     RcsShape_noDistance                 // RCSSHAPE_MARKER
   },
 
@@ -1554,7 +1644,7 @@ RcsShapeDistFunc[RCSSHAPE_SHAPE_MAX][RCSSHAPE_SHAPE_MAX] =
   {
     RcsShape_noDistance,                // RCSSHAPE_NONE
     RcsShape_closestPointToSSL,         // RCSSHAPE_SSL
-    RcsShape_noDistance,                // RCSSHAPE_SSR
+    RcsShape_closestPointToSSR,         // RCSSHAPE_SSR
     RcsShape_noDistance,                // RCSSHAPE_MESH
     RcsShape_closestPointToBox,         // RCSSHAPE_BOX
     RcsShape_closestPointToCylinder,    // RCSSHAPE_CYLINDER
@@ -1580,6 +1670,30 @@ RcsShapeDistFunc[RCSSHAPE_SHAPE_MAX][RCSSHAPE_SHAPE_MAX] =
 };
 
 /*******************************************************************************
+ * Distance function pointer access.
+ ******************************************************************************/
+RcsDistanceFunction RcsShape_getDistanceFunction(unsigned int shapeTypeIdx1,
+                                                 unsigned int shapeTypeIdx2)
+{
+  if ((shapeTypeIdx1>=RCSSHAPE_SHAPE_MAX) ||
+      (shapeTypeIdx2>=RCSSHAPE_SHAPE_MAX))
+  {
+    RLOG(4, "Shape index out of range: %d %d must be less than %d",
+         shapeTypeIdx1, shapeTypeIdx2, RCSSHAPE_SHAPE_MAX);
+    return NULL;
+  }
+
+  RcsDistanceFunction fnc = RcsShapeDistFunc[shapeTypeIdx1][shapeTypeIdx2];
+
+  if (fnc==RcsShape_noDistance)
+  {
+    return NULL;
+  }
+
+  return RcsShapeDistFunc[shapeTypeIdx1][shapeTypeIdx2];
+}
+
+/*******************************************************************************
  * Compute the closest distance via function table lookup.
  ******************************************************************************/
 double RcsShape_distance(const RcsShape* s1,
@@ -1600,9 +1714,9 @@ double RcsShape_distance(const RcsShape* s1,
   HTr_transform(&A_C1I, A_B1I, &s1->A_CB);
   HTr_transform(&A_C2I, A_B2I, &s2->A_CB);
 
-  RCHECK(I_cp1);
-  RCHECK(I_cp2);
-  RCHECK(I_n);
+  RCHECK_MSG(I_cp1, "%s - %s", RcsShape_name(s1->type), RcsShape_name(s2->type));
+  RCHECK_MSG(I_cp2, "%s - %s", RcsShape_name(s1->type), RcsShape_name(s2->type));
+  RCHECK_MSG(I_n, "%s - %s", RcsShape_name(s1->type), RcsShape_name(s2->type));
 
   double d = func(s1, s2, &A_C1I, &A_C2I, I_cp1, I_cp2, I_n);
 
@@ -1621,10 +1735,10 @@ double RcsShape_distanceToPoint(const RcsShape* shape,
   RcsShape ptShape;
   memset(&ptShape, 0, sizeof(RcsShape));
   ptShape.type = RCSSHAPE_POINT;
-  HTr_setIdentity(&ptShape.A_CB);
-  Vec3d_setZero(ptShape.extents);
+  Mat3d_setIdentity(ptShape.A_CB.rot);
+  Vec3d_copy(ptShape.A_CB.org, I_pt);
   ptShape.scale = 1.0;
-  ptShape.computeType |= RCSSHAPE_COMPUTE_DISTANCE;
+  ptShape.computeType = RCSSHAPE_COMPUTE_DISTANCE;
 
   double tmp[3];
   double d = RcsShape_distance(shape, &ptShape, A_SI, HTr_identity(),
@@ -1684,7 +1798,8 @@ void RcsShape_fprintDistanceFunctions(FILE* out)
 
   for (int i=0; i<RCSSHAPE_SHAPE_MAX; ++i)
   {
-    if ((i==RCSSHAPE_NONE) || (i==RCSSHAPE_REFFRAME) || (i==RCSSHAPE_GPISF) || (i==RCSSHAPE_MARKER))
+    if ((i==RCSSHAPE_NONE) || (i==RCSSHAPE_REFFRAME) || (i==RCSSHAPE_GPISF) ||
+        (i==RCSSHAPE_MARKER))
     {
       continue;
     }
@@ -1695,7 +1810,8 @@ void RcsShape_fprintDistanceFunctions(FILE* out)
 
   for (int i=0; i<RCSSHAPE_SHAPE_MAX; ++i)
   {
-    if ((i==RCSSHAPE_NONE) || (i==RCSSHAPE_REFFRAME) || (i==RCSSHAPE_GPISF) || (i==RCSSHAPE_MARKER))
+    if ((i==RCSSHAPE_NONE) || (i==RCSSHAPE_REFFRAME) || (i==RCSSHAPE_GPISF) ||
+        (i==RCSSHAPE_MARKER))
     {
       continue;
     }
@@ -1708,7 +1824,8 @@ void RcsShape_fprintDistanceFunctions(FILE* out)
 
     for (int j=0; j<RCSSHAPE_SHAPE_MAX; ++j)
     {
-      if ((j==RCSSHAPE_NONE) || (j==RCSSHAPE_REFFRAME) || (j==RCSSHAPE_GPISF) || (j==RCSSHAPE_MARKER))
+      if ((j==RCSSHAPE_NONE) || (j==RCSSHAPE_REFFRAME) || (j==RCSSHAPE_GPISF)
+          || (j==RCSSHAPE_MARKER))
       {
         continue;
       }
@@ -1722,27 +1839,29 @@ void RcsShape_fprintDistanceFunctions(FILE* out)
 
 
 
+  /*
+  for (int i=0; i<RCSSHAPE_SHAPE_MAX; ++i)
+  {
+   if ((i==RCSSHAPE_NONE) || (i==RCSSHAPE_REFFRAME) || (i==RCSSHAPE_GPISF) ||
+       (i==RCSSHAPE_MARKER))
+   {
+     continue;
+   }
 
-  //for (int i=0; i<RCSSHAPE_SHAPE_MAX; ++i)
-  //{
-  //  if ((i==RCSSHAPE_NONE) || (i==RCSSHAPE_REFFRAME) || (i==RCSSHAPE_GPISF) || (i==RCSSHAPE_MARKER))
-  //  {
-  //    continue;
-  //  }
-
-  //  for (int j=0; j<RCSSHAPE_SHAPE_MAX; ++j)
-  //  {
-  //    if ((j==RCSSHAPE_NONE) || (j==RCSSHAPE_REFFRAME) || (j==RCSSHAPE_GPISF) || (j==RCSSHAPE_MARKER))
-  //    {
-  //      continue;
-  //    }
-  //    unsigned int baseAddr = (unsigned int) RcsShapeDistFunc[0][0];
-  //    unsigned int fcnAddr = (unsigned int) RcsShapeDistFunc[i][j];
-  //    fprintf(out, "%d-%d: %u\n", i, j, fcnAddr-baseAddr);
-  //  }
-  //  fprintf(out, "\n");
-  //}
-
+   for (int j=0; j<RCSSHAPE_SHAPE_MAX; ++j)
+   {
+     if ((j==RCSSHAPE_NONE) || (j==RCSSHAPE_REFFRAME) || (j==RCSSHAPE_GPISF) ||
+         (j==RCSSHAPE_MARKER))
+     {
+       continue;
+     }
+     unsigned int baseAddr = (unsigned int) RcsShapeDistFunc[0][0];
+     unsigned int fcnAddr = (unsigned int) RcsShapeDistFunc[i][j];
+     fprintf(out, "%d-%d: %u\n", i, j, fcnAddr-baseAddr);
+   }
+   fprintf(out, "\n");
+  }
+  */
 
 }
 

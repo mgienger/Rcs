@@ -50,7 +50,7 @@
 RCS_INSTALL_ERRORHANDLERS
 
 
-bool testMode(int mode, int argc, char** argv)
+static bool testMode(int mode, int argc, char** argv)
 {
   int numTests = 1;
   bool success = true;
@@ -95,15 +95,15 @@ bool testMode(int mode, int argc, char** argv)
         fprintf(stderr, "\t\t14  Tests Axis Angle conversion\n");
         fprintf(stderr, "\t\t15  Tests Axis Angle interpolation\n");
         fprintf(stderr, "\t\t16  Tests Miller inversion algorithm\n");
-        fprintf(stderr, "\t\t17  Tests interpolation algorithms\n");
-        fprintf(stderr, "\t\t18  Tests moving man filter\n");
+        fprintf(stderr, "\t\t17  Tests minimum rotation angle\n");
+        fprintf(stderr, "\t\t18  Test line search\n");
         fprintf(stderr, "\t\t19  Tests minimum jerk trajectory\n");
         fprintf(stderr, "\t\t20  Tests 5th order poly min. jerk trajectory\n");
         fprintf(stderr, "\t\t21  Tests minimum jerk interpolation\n");
         fprintf(stderr, "\t\t22  Test numerical issues\n");
         fprintf(stderr, "\t\t23  Test 1-dimensional filters\n");
         fprintf(stderr, "\t\t24  Test n-dimensional filters\n");
-        fprintf(stderr, "\t\t25  Test line search\n");
+        fprintf(stderr, "\t\t25  Tests moving man filter\n");
         fprintf(stderr, "\t\t26  Test Dynamic Time Warping\n");
         fprintf(stderr, "\t\t27  Test Mat3d functions\n");
         fprintf(stderr, "\t\t28  Test ViaPointSequence\n");
@@ -113,110 +113,118 @@ bool testMode(int mode, int argc, char** argv)
         fprintf(stderr, "\t\t32  Test Quaternion conversion\n");
         fprintf(stderr, "\t\t33  Test Eigen3 linear algebra functions\n");
         fprintf(stderr, "\t\t34  Test SLERP against matrix clip\n");
+        fprintf(stderr, "\t\t35  Test StackVec class\n");
+        fprintf(stderr, "\t\t36  Tests interpolation algorithms\n");
         break;
       }
 
       case 1:
-        success = testEulerAnglesFunctions(argc, argv);
+        success = testEulerAnglesFunctions(argc, argv) && success;
         break;
       case 2:
-        success = testSimpleMatrixFunctions(argc, argv);
+        success = testSimpleMatrixFunctions(argc, argv) && success;
         break;
       case 3:
-        success = testLinearAlgebraFunctions(argc, argv);
+        success = testLinearAlgebraFunctions(argc, argv) && success;
         break;
       case 4:
-        success = testDerivatives(argc, argv);
+        success = testDerivatives(argc, argv) && success;
         break;
       case 5:
-        success = testHTr(argc, argv);
+        success = testHTr(argc, argv) && success;
         break;
       case 6:
-        success = testBasicMath(argc, argv);
+        success = testBasicMath(argc, argv) && success;
         break;
       case 7:
-        success = testCurveFitting(argc, argv);
+        success = testCurveFitting(argc, argv) && success;
         break;
       case 8:
-        success = testVectorProjection(argc, argv);
+        success = testVectorProjection(argc, argv) && success;
         break;
       case 9:
-        success = testOrthogonalization3x3(argc, argv);
+        success = testOrthogonalization3x3(argc, argv) && success;
         break;
       case 10:
-        success = testEigenvalues3x3(argc, argv);
+        success = testEigenvalues3x3(argc, argv) && success;
         break;
       case 11:
-        success = testFiniteNan();
+        success = testFiniteNan() && success;
         break;
       case 12:
-        success = testWoodburyIdenity(argc, argv);
+        success = testWoodburyIdenity(argc, argv) && success;
         break;
       case 13:
-        success = testRnd(argc, argv);
+        success = testRnd(argc, argv) && success;
         break;
       case 14:
-        success = testAxisAngleConversion(argc, argv);
+        success = testAxisAngleConversion(argc, argv) && success;
         break;
       case 15:
-        success = testAxisAngleInterpolation(argc, argv);
+        success = testAxisAngleInterpolation(argc, argv) && success;
         break;
       case 16:
-        success = testMillerInversion(argc, argv);
+        success = testMillerInversion(argc, argv) && success;
         break;
       case 17:
-        success = testInterpolation(argc, argv);
+        success = testMinimumRotationAngle(argc, argv) && success;
         break;
       case 18:
-        success = testMovingMeanFilter(argc, argv);
+        success = testLinesearch(argc, argv) && success;
         break;
       case 19:
-        success = testMinJerkTrj(argc, argv);
+        success = testMinJerkTrj(argc, argv) && success;
         break;
       case 20:
-        success = testMinJerkTrjPoly(argc, argv);
+        success = testMinJerkTrjPoly(argc, argv) && success;
         break;
       case 21:
-        success = testArcLengthInterpolation(argc, argv);
+        success = testArcLengthInterpolation(argc, argv) && success;
         break;
       case 22:
-        success = testNumerics(argc, argv);
+        success = testNumerics(argc, argv) && success;
         break;
       case 23:
-        success = testFilters1D(argc, argv);
+        success = testFilters1D(argc, argv) && success;
         break;
       case 24:
-        success = testFiltersND(argc, argv);
+        success = testFiltersND(argc, argv) && success;
         break;
       case 25:
-        success = testLinesearch(argc, argv);
+        success = testMovingMeanFilter(argc, argv) && success;
         break;
       case 26:
-        success = testDTW(argc, argv);
+        success = testDTW(argc, argv) && success;
         break;
       case 27:
-        success = testMat3dFunctions(argc, argv);
+        success = testMat3dFunctions(argc, argv) && success;
         break;
       case 28:
-        success = testViaPointSequence(argc, argv);
+        success = testViaPointSequence(argc, argv) && success;
         break;
       case 29:
-        success = testPolynomialRootFinding(argc, argv);
+        success = testPolynomialRootFinding(argc, argv) && success;
         break;
       case 30:
-        success = testViaPointSequencePlotter(argc, argv);
+        success = testViaPointSequencePlotter(argc, argv) && success;
         break;
       case 31:
-        success = testViaPointTrajectory1D(argc, argv);
+        success = testViaPointTrajectory1D(argc, argv) && success;
         break;
       case 32:
-        success = testQuaternionConversion(argc, argv);
+        success = testQuaternionConversion(argc, argv) && success;
         break;
       case 33:
-        success = testFunctionsEigen3(argc, argv);
+        success = testFunctionsEigen3(argc, argv) && success;
         break;
       case 34:
-        success = testSlerp(argc, argv);
+        success = testSlerp(argc, argv) && success;
+        break;
+      case 35:
+        success = testStackVec(argc, argv) && success;
+        break;
+      case 36:
+        success = testInterpolation(argc, argv) && success;
         break;
       default:
         RMSGS("there is no mode %d", mode);
@@ -235,20 +243,27 @@ bool testMode(int mode, int argc, char** argv)
  ******************************************************************************/
 int main(int argc, char** argv)
 {
-  int mode = 0;
+  int result = 0, mode = 0;
 
   // Parse command line arguments
   Rcs::CmdLineParser argP(argc, argv);
-  argP.getArgument("-dl", &RcsLogLevel, "Set debug level (default is %d)", RcsLogLevel);
+  argP.getArgument("-dl", &RcsLogLevel, "Set debug level (default is %d)",
+                   RcsLogLevel);
   argP.getArgument("-m", &mode, "Set test mode (default is %d)", mode);
 
   bool success = true;
 
   if (mode==-1)
   {
-    for (int i=1; i<=6; ++i)
+    for (int i=1; i<=18; ++i)
     {
-      success = testMode(i, argc, argv) | success;
+      bool success_i = testMode(i, argc, argv);
+      if (!success_i)
+      {
+        result++;
+      }
+
+      success = success_i && success;
     }
   }
   else
@@ -262,8 +277,8 @@ int main(int argc, char** argv)
   }
   else
   {
-    printf("Test %s\n", success ? "SUCCEEDED" : "FAILED");
+    RLOGS(1, "Math tests %s", success ? "SUCCEEDED" : "FAILED");
   }
 
-  return 0;
+  return Math_iClip(result, 0, 255);
 }

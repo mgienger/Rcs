@@ -1,7 +1,28 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
 SET(BST_INSTALL_CATEGORY Libraries) 
 
-PROJECT(Rcs_2.0)
+PROJECT(Rcs)
+
+################################################################################
+# Check if project is stand-alone or inside tree with dependencies
+################################################################################
+SET(RCS_STANDALONE_PROJECT OFF)
+
+IF(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+  SET(RCS_STANDALONE_PROJECT ON)
+  MESSAGE(STATUS "Compiling Rcs as stand-alone project")
+
+  # Adjust paths to match ToolBOS install conventions. 
+  IF (CMAKE_MODULE_PATH MATCHES "ToolBOSCore")
+    SET(CMAKE_INSTALL_PREFIX $ENV{SIT}/${BST_INSTALL_CATEGORY}/Rcs CACHE PATH "Cmake prefix" FORCE)
+    MESSAGE(STATUS "Setting CMAKE_INSTALL_PREFIX to ${CMAKE_INSTALL_PREFIX}")
+    MESSAGE(STATUS "Setting output paths to comply with BST")
+    SET(PLATFORM_INSTALL_DIR $ENV{MAKEFILE_PLATFORM})
+  ENDIF()
+
+  SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin/${PLATFORM_INSTALL_DIR})
+  SET(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib/${PLATFORM_INSTALL_DIR})
+ENDIF()
 
 IF (NOT CMAKE_BUILD_TYPE)
   IF (WIN32)
@@ -19,18 +40,11 @@ ENDIF()
 
 SET(RCS_THIRDPARTY_DIR ${PROJECT_SOURCE_DIR}/external)
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
-SET(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib)
+SET(LIBRARY_LINKING_TYPE "SHARED")
+SITE_NAME(HOSTNAME)
 
-IF("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
-  MESSAGE("-- Compiler is: Clang")
-ELSEIF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-  MESSAGE("-- Compiler is: GNU")
-ELSEIF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
-  MESSAGE("-- Compiler is: Intel")
-ELSEIF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
-  MESSAGE("-- Compiler is: MSVC")
-ENDIF()
+MESSAGE(STATUS "Using cmake ${CMAKE_VERSION}")
+MESSAGE(STATUS "Compiler is: ${CMAKE_CXX_COMPILER_ID}")
 
 ################################################################################
 #
@@ -41,55 +55,33 @@ ENDIF()
 # This needs to go before including the sub directories, since they 
 # partially create links /copies inside the config directory
 #
+# When unpacking the linux source under windows, symbolic links are
+# interpreted as files. In this case, we delete the file, otherwise there
+# will be no copying dones.
+#
 ################################################################################
-IF(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/config")
+SET(CFG_FROM ${CMAKE_CURRENT_SOURCE_DIR}/config)
+SET(CFG_TO ${PROJECT_BINARY_DIR}/config)
 
+IF (WIN32 AND (NOT IS_DIRECTORY "${CFG_TO}") AND (EXISTS "${CFG_TO}"))
+  MESSAGE(STATUS "Removing non-directory ${CFG_TO}")
+  FILE(REMOVE ${CFG_TO})
+ENDIF()
+
+IF(NOT EXISTS "${CFG_TO}")
   IF(UNIX)
     SET(CONFIGDIR_COPY_COMMAND create_symlink)
-    MESSAGE("-- Linking config directory")
+    MESSAGE(STATUS "Linking config directory from ${CFG_FROM} to ${CFG_TO}")
   ELSE()
     SET(CONFIGDIR_COPY_COMMAND copy_directory)
-    MESSAGE("-- Copying config directory")
+    MESSAGE(STATUS "Copying config directory from ${CFG_FROM} to ${CFG_TO}")
   ENDIF()
 
   EXECUTE_PROCESS (COMMAND
-   ${CMAKE_COMMAND} -E ${CONFIGDIR_COPY_COMMAND}
-   ${PROJECT_SOURCE_DIR}/config
-   ${CMAKE_CURRENT_BINARY_DIR}/config)
-
+   ${CMAKE_COMMAND} -E ${CONFIGDIR_COPY_COMMAND} ${CFG_FROM} ${CFG_TO})
 ELSE()
-
-  MESSAGE("-- Config directory already exists - skipping")
-
+  MESSAGE(STATUS "Config directory ${CFG_TO} already exists - skipping")
 ENDIF()
-
-################################################################################
-#
-# Create shared libraries for Linux, and static ones for Windows
-# For CMake 3.4 and higher, there is an easy way to create windows dlls. For
-# details, see http://www.kitware.com/blog/home/post/939
-#
-################################################################################
-IF(UNIX)
-  MESSAGE("-- Creating dynamically linked libraries (.so) under Unix")
-  SET(LIBRARY_LINKING_TYPE "SHARED")
-ENDIF()
-
-IF(WIN32)
-  MESSAGE("We are on a windows machine")
-  IF(CMAKE_MAJOR_VERSION STREQUAL "3" AND CMAKE_MINOR_VERSION STREQUAL "4")
-    MESSAGE("Found CMake version ${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION}.${CMAKE_PATCH_VERSION}: Creating windows dlls")
-    SET(LIBRARY_LINKING_TYPE "SHARED")
-    SET(BUILD_SHARED_LIBS ON)
-    SET(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    SET(CREATE_WIN_DLL TRUE)
-    ADD_DEFINITIONS(-DWIN_DLL)
-  ELSE()
-    MESSAGE(FATAL_ERROR "Found CMake version ${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION}.${CMAKE_PATCH_VERSION}, but at least 3.4 is needed")
-  ENDIF()
-ENDIF(WIN32)
-
-SITE_NAME(HOSTNAME)
 
 ################################################################################
 #
@@ -97,20 +89,38 @@ SITE_NAME(HOSTNAME)
 #
 ################################################################################
 OPTION(HEADLESS_BUILD "Build without graphics and Guis" OFF)
-OPTION(USE_WM5 "Use Wildmagic library" OFF)
-# OPTION(USE_OCTOMAP "Use Octomap library" OFF)
-OPTION(USE_EIGEN3 "Use Eigen3 library" OFF)
+OPTION(USE_EIGEN3 "Use Eigen3 in RcsCore" OFF)
 OPTION(ENABLE_DEBUG_MACROS "Enable debug macros also in release mode" ON)
 
 IF(UNIX)
   OPTION(ENABLE_C++11 "Compile with C++11 support enabled" OFF)
 ENDIF()
 
-SET(USE_VORTEX OFF CACHE STRING "Vortex version to use")
+FIND_PACKAGE(WM5 QUIET)
+IF (WM5_FOUND)
+  OPTION(USE_WM5 "Use Wildmagic library" ON)
+ELSE()
+  OPTION(USE_WM5 "Use Wildmagic library" OFF)
+ENDIF()
+
+FIND_PACKAGE(Vortex QUIET)
+IF (VORTEX_FOUND)
+  SET(USE_VORTEX ESSENTIALS CACHE STRING "Vortex version to use")
+ELSE()
+  SET(USE_VORTEX OFF CACHE STRING "Vortex version to use")
+ENDIF()
 SET_PROPERTY(CACHE USE_VORTEX PROPERTY STRINGS OFF ESSENTIALS)
 
-SET(USE_BULLET OFF CACHE STRING "Bullet version to use")
-SET_PROPERTY(CACHE USE_BULLET PROPERTY STRINGS OFF 2.83_double 2.83_float)
+IF(UNIX)
+  FIND_PACKAGE(Bullet QUIET)
+ENDIF()
+  
+IF(BULLET_FOUND)
+  SET(USE_BULLET 2.83_float CACHE STRING "Bullet version to use")
+ELSE()
+  SET(USE_BULLET OFF CACHE STRING "Bullet version to use")
+ENDIF()
+SET_PROPERTY(CACHE USE_BULLET PROPERTY STRINGS latest 2.83_float 2.83_double OFF)
 
 ################################################################################
 #
@@ -120,25 +130,40 @@ SET_PROPERTY(CACHE USE_BULLET PROPERTY STRINGS OFF 2.83_double 2.83_float)
 INCLUDE(Externals)
 INCLUDE(CompileSettings)
 
+IF (WIN32)
+  ADD_DEFINITIONS(-D_USE_MATH_DEFINES)   # M_PI etc. for windows
+ENDIF(WIN32)
+
 SET(ARCH ${CMAKE_SYSTEM_NAME})
 
 IF(${CMAKE_BUILD_TYPE} STREQUAL "Release" AND NOT ENABLE_DEBUG_MACROS)
   ADD_DEFINITIONS(-DRCS_NO_DEBUG)
-  MESSAGE("Compiling in RELEASE mode")
+  MESSAGE(STATUS "Compiling in RELEASE mode, debug macros DISABLED")
 ENDIF()
 
-# Add the automatically determined parts of the RPATH which point to directories 
-# outside the build tree to the install RPATH. Required for Vortex and other stuff
-# from the SIT.
-# Note: This only works with CMake >= 3.0. With 2.8, the library directories of the dependencies
-# must be added to the LD_LIBRARY_PATH manually in oredr to use the installed executables.
-# This has no effect on using the package in another CMake project.
+################################################################################
+#
+# Add the automatically determined parts of the RPATH which point to directories
+# outside the build tree to the install RPATH. Required for Vortex and other
+# dependencies from the SIT.
+# Note: This only works with CMake >= 3.0. With 2.8, the library directories of
+# the dependencies must be added to the LD_LIBRARY_PATH manually in oredr to
+# use the installed executables. This has no effect on using the package in
+# another CMake project.
+#
+################################################################################
 SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+################################################################################
+#
 # The RPATH to be used when installing, but only if it's not a system directory
-# Source: CMake wiki (https://gitlab.kitware.com/cmake/community/wikis/doc/cmake/RPATH-handling)
-LIST(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/lib" isSystemDir)
+# See CMake wiki:
+# (https://gitlab.kitware.com/cmake/community/wikis/doc/cmake/RPATH-handling)
+#
+################################################################################
+LIST(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/lib/${PLATFORM_INSTALL_DIR}" isSystemDir)
 IF("${isSystemDir}" STREQUAL "-1")
-   SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+   SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib/${PLATFORM_INSTALL_DIR}")
 ENDIF("${isSystemDir}" STREQUAL "-1")
 
 
@@ -155,21 +180,6 @@ ENDIF()
 
 ################################################################################
 #
-# If a user-file is in the cmake directory, it will be called
-#
-################################################################################
-SET(USER_LIST "${PROJECT_SOURCE_DIR}/cmake/CMakeLists-$ENV{USER}.txt")
-
-IF(EXISTS ${USER_LIST})
-  MESSAGE("-- Including " ${USER_LIST})
-  INCLUDE(${USER_LIST})
-ELSE()
-  MESSAGE("-- Not found: " ${USER_LIST})
-ENDIF()
-
-
-################################################################################
-#
 # Setup exported target collection
 #
 ################################################################################
@@ -182,20 +192,46 @@ ENDFUNCTION()
 
 ################################################################################
 #
+# If a user-file is in the cmake directory, it will be included.
+#
+################################################################################
+SET(USER_LIST "${PROJECT_SOURCE_DIR}/cmake/CMakeLists-$ENV{USER}.txt")
+
+IF(EXISTS ${USER_LIST})
+  MESSAGE(STATUS "Including " ${USER_LIST})
+  INCLUDE(${USER_LIST})
+ELSE()
+  MESSAGE(STATUS "Not found: " ${USER_LIST})
+ENDIF()
+
+################################################################################
+#
 # Add source code directories
 #
 ################################################################################
-
 ADD_SUBDIRECTORY (src)
 ADD_SUBDIRECTORY (bin)
 ADD_SUBDIRECTORY (examples)
 
 IF(EXISTS "${PROJECT_SOURCE_DIR}/projects")
-  MESSAGE("-- Including projects directory" )
+  MESSAGE(STATUS "Including projects directory" )
   ADD_SUBDIRECTORY (projects)
 ENDIF()
 
 ADD_SUBDIRECTORY (doc)
+
+################################################################################
+#
+# Configure unit test script
+#
+################################################################################
+CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/unittest.in
+  ${CMAKE_CURRENT_BINARY_DIR}/unittest.sh @ONLY)
+
+ADD_CUSTOM_TARGET(unittest 
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/unittest.sh
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Performing unittests" VERBATIM)
 
 ################################################################################
 #

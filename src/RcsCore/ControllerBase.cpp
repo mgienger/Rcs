@@ -36,14 +36,18 @@
 
 #include "ControllerBase.h"
 #include "TaskFactory.h"
+#include "TaskJoints.h"
+#include "TaskJoint.h"
 #include "Rcs_math.h"
 #include "Rcs_macros.h"
 #include "Rcs_typedef.h"
 #include "Rcs_resourcePath.h"
 #include "Rcs_graphParser.h"
 #include "Rcs_kinematics.h"
+#include "Rcs_dynamics.h"
 #include "Rcs_joint.h"
 
+#include <cfloat>
 
 
 
@@ -60,7 +64,6 @@ Rcs::ControllerBase::ControllerBase(const std::string& xmlDescription,
   name("Unknown controller"),
   xmlFile(xmlDescription)
 {
-  // Copy the XML file name
   char txt[256];
   bool fileExists = Rcs_getAbsoluteFileName(xmlDescription.c_str(), txt);
 
@@ -128,7 +131,6 @@ void Rcs::ControllerBase::initFromXmlNode(xmlNodePtr xmlNodeController)
   // if we don't find it here.
   if (getXMLNodePropertyStringN(xmlNodeController, "graph", txt, 256))
   {
-    this->xmlGraphFile = std::string(txt);
     this->graph = RcsGraph_create(txt);
     RCHECK_MSG(this->graph, "Failed to create graph \"%s\"", txt);
   }
@@ -164,7 +166,7 @@ void Rcs::ControllerBase::initFromXmlNode(xmlNodePtr xmlNodeController)
     else if (isXMLNodeName(node, "Graph"))
     {
       RCHECK_MSG(this->graph==NULL, "Found xml tag <Graph>, but already graph"
-                 " loaded graph from file \"%s\"", this->xmlGraphFile.c_str());
+                 " loaded graph from file \"%s\"", graph->xmlFile);
       this->graph = RcsGraph_createFromXmlNode(node);
     }
 
@@ -237,7 +239,7 @@ Rcs::ControllerBase& Rcs::ControllerBase::operator= (const Rcs::ControllerBase& 
 
   for (size_t i = 0; i < this->tasks.size(); i++)
   {
-    delete(this->tasks[i]);
+    delete (this->tasks[i]);
   }
 
   this->tasks.clear();
@@ -272,7 +274,7 @@ Rcs::ControllerBase::~ControllerBase()
 
   for (size_t i = 0; i < this->tasks.size(); i++)
   {
-    delete(this->tasks[i]);
+    delete (this->tasks[i]);
   }
 
   if (this->ownsGraph == true)
@@ -350,17 +352,6 @@ size_t Rcs::ControllerBase::getActiveTaskDim(const MatNd* activation) const
 }
 
 /*******************************************************************************
- * Returns the task's index to its entries in x_curr, x_des, and x_dot_des
- * vectors.
- ******************************************************************************/
-size_t Rcs::ControllerBase::getTaskArrayIndex(size_t id) const
-{
-  RCHECK_MSG(id < this->tasks.size(), "id: %zu   size: %zu",
-             id, this->tasks.size());
-  return this->taskArrayIdx[id];
-}
-
-/*******************************************************************************
  * See header.
  ******************************************************************************/
 int Rcs::ControllerBase::getTaskIndex(const char* name) const
@@ -403,6 +394,17 @@ int Rcs::ControllerBase::getTaskIndex(const Rcs::Task* task) const
 }
 
 /*******************************************************************************
+ * Returns the task's index to its entries in x_curr, x_des, and x_dot_des
+ * vectors.
+ ******************************************************************************/
+size_t Rcs::ControllerBase::getTaskArrayIndex(size_t id) const
+{
+  RCHECK_MSG(id < this->tasks.size(), "id: %zu   size: %zu",
+             id, this->tasks.size());
+  return this->taskArrayIdx[id];
+}
+
+/*******************************************************************************
  * See header.
  ******************************************************************************/
 int Rcs::ControllerBase::getTaskArrayIndex(const char* name) const
@@ -421,6 +423,29 @@ int Rcs::ControllerBase::getTaskArrayIndex(const char* name) const
   }
 
   RLOG(4, "No task with name \"%s\" found!", name);
+
+  return -1;
+}
+
+/*******************************************************************************
+ * See header.
+ ******************************************************************************/
+int Rcs::ControllerBase::getTaskArrayIndex(const Task* task) const
+{
+  if (task == NULL)
+  {
+    return -1;
+  }
+
+  for (size_t id = 0; id < this->tasks.size(); id++)
+  {
+    if (tasks[id]==task)
+    {
+      return getTaskArrayIndex(id);
+    }
+  }
+
+  RLOG(4, "No task \"%s\" found!", task->getName().c_str());
 
   return -1;
 }
@@ -511,7 +536,6 @@ std::vector<Rcs::Task*> Rcs::ControllerBase::getTasks(const MatNd* a) const
 std::string Rcs::ControllerBase::getTaskType(size_t id) const
 {
   RCHECK(id < this->tasks.size());
-
   return this->tasks[id]->getClassName();
 }
 
@@ -526,9 +550,9 @@ RcsGraph* Rcs::ControllerBase::getGraph() const
 /*******************************************************************************
  * Return the graph file name (e.g., gScenario.xml).
  ******************************************************************************/
-const std::string& Rcs::ControllerBase::getGraphFileName() const
+std::string Rcs::ControllerBase::getGraphFileName() const
 {
-  return xmlGraphFile;
+  return std::string(graph->xmlFile);
 }
 
 /*******************************************************************************
@@ -854,6 +878,12 @@ void Rcs::ControllerBase::computeDX(MatNd* dx,
       x_des_i = &x_des->ele[nRowsAll];
 
       tasks[i]->computeDX(dx_i, x_des_i);
+
+      if (a_des)
+      {
+        VecNd_constMulSelf(dx_i, MatNd_get(a_des, i, 0), dimTask);
+      }
+
       nRowsActive += dimTask;
     }
 
@@ -1014,11 +1044,18 @@ void Rcs::ControllerBase::integrateXp_ik(MatNd* x_res,
  * Delta x for differential kinematics.
  ******************************************************************************/
 void Rcs::ControllerBase::computeDXp(MatNd* dx_dot,
-                                     const MatNd* x_dot_des,
+                                     const MatNd* x_dot_des_,
                                      const MatNd* a_des) const
 {
-  unsigned int dimTask, nRows = 0;
-  double* x_dot_des_i;
+  unsigned int nRows = 0;
+  const MatNd* x_dot_des = x_dot_des_;
+  MatNd* x_dot_des_buf = NULL;
+
+  if (x_dot_des_ == NULL)
+  {
+    MatNd_create2(x_dot_des_buf, getTaskDim(), 1);
+    x_dot_des = x_dot_des_buf;
+  }
 
   for (size_t i = 0; i < this->tasks.size(); i++)
   {
@@ -1026,21 +1063,12 @@ void Rcs::ControllerBase::computeDXp(MatNd* dx_dot,
     {
       // Check that appending the current dx vector will not write
       // into non-existing memory
-      dimTask = tasks[i]->getDim();
+      const unsigned int dimTask = tasks[i]->getDim();
       RCHECK_MSG(dx_dot->size >= nRows + dimTask, "While adding task "
                  "\"%s\": size of dx_dot: %d   m: %d   dimTask: %d",
                  getTaskName(i).c_str(), dx_dot->size, nRows, dimTask);
 
-      if (x_dot_des != NULL)
-      {
-        x_dot_des_i = &x_dot_des->ele[this->taskArrayIdx[i]];
-      }
-      else
-      {
-        x_dot_des_i = RNSTALLOC(dimTask, double);
-        VecNd_setZero(x_dot_des_i, dimTask);
-      }
-
+      const double* x_dot_des_i = &x_dot_des->ele[this->taskArrayIdx[i]];
       double* dx_dot_i = &dx_dot->ele[nRows];
       tasks[i]->computeDXp(dx_dot_i, x_dot_des_i);
       nRows += dimTask;
@@ -1050,17 +1078,26 @@ void Rcs::ControllerBase::computeDXp(MatNd* dx_dot,
   // Reshape. See computeJ() for the reason why to do it here.
   dx_dot->m = nRows;
   dx_dot->n = 1;
+
+  MatNd_destroy(x_dot_des_buf);
 }
 
 /*******************************************************************************
  * Projects task-space accelerations into the Jacobian coordinates.
  ******************************************************************************/
 void Rcs::ControllerBase::computeFfXpp(MatNd* x_ddot_ik,
-                                       const MatNd* x_ddot,
+                                       const MatNd* x_ddot_,
                                        const MatNd* a_des) const
 {
   unsigned int dimTask, nRows = 0;
-  double* x_ddot_i;
+  const MatNd* x_ddot = x_ddot_;
+  MatNd* x_ddot_buf = NULL;
+
+  if (x_ddot_ == NULL)
+  {
+    MatNd_create2(x_ddot_buf, getTaskDim(), 1);
+    x_ddot = x_ddot_buf;
+  }
 
   for (size_t i = 0; i < this->tasks.size(); i++)
   {
@@ -1073,16 +1110,7 @@ void Rcs::ControllerBase::computeFfXpp(MatNd* x_ddot_ik,
                  "\"%s\": size of dx_dot: %d   m: %d   dimTask: %d",
                  getTaskName(i).c_str(), x_ddot_ik->size, nRows, dimTask);
 
-      if (x_ddot != NULL)
-      {
-        x_ddot_i = &x_ddot->ele[this->taskArrayIdx[i]];
-      }
-      else
-      {
-        x_ddot_i = RNSTALLOC(dimTask, double);
-        VecNd_setZero(x_ddot_i, dimTask);
-      }
-
+      const double* x_ddot_i = &x_ddot->ele[this->taskArrayIdx[i]];
       double* x_ddot_ik_i = &x_ddot_ik->ele[nRows];
       tasks[i]->computeFfXpp(x_ddot_ik_i, x_ddot_i);
       nRows += dimTask;
@@ -1092,6 +1120,8 @@ void Rcs::ControllerBase::computeFfXpp(MatNd* x_ddot_ik,
   // Reshape. See computeJ() for the reason why to do it here.
   x_ddot_ik->m = nRows;
   x_ddot_ik->n = 1;
+
+  MatNd_destroy(x_ddot_buf);
 }
 
 /*******************************************************************************
@@ -1452,6 +1482,8 @@ bool Rcs::ControllerBase::test(bool verbose)
 {
   bool success = true;
 
+  // Check for individual tasks. We traverse the task vector and call each
+  // tasks's check function.
   for (size_t id = 0; id < getNumberOfTasks(); id++)
   {
     bool success_i = this->tasks[id]->test(verbose);
@@ -1471,6 +1503,61 @@ bool Rcs::ControllerBase::test(bool verbose)
     RMSG("%d task tests %s",
          (int) getNumberOfTasks(), success ? "succeeded" : "failed");
   }
+
+  // Test speed limit check. We go through all joints that have a speedLimit
+  // and are not constrained. We roll a dice and violate it or not. The
+  // violation is checked with the checkLimits() function and must return the
+  // consistent result.
+  for (int i=0; i<(int)getGraph()->dof; ++i)
+  {
+    const RcsJoint* queryJnt = NULL;
+
+    RCSGRAPH_TRAVERSE_JOINTS(getGraph())
+    {
+      if (JNT->speedLimit == DBL_MAX || JNT->constrained)
+      {
+        continue;
+      }
+
+      getGraph()->q_dot->ele[JNT->jointIndex] =
+        Math_getRandomNumber(-JNT->speedLimit, JNT->speedLimit);
+
+      if (i == JNT->jointIndex)
+      {
+        queryJnt = JNT;
+      }
+    }
+
+    if (queryJnt)
+    {
+      bool violates = Math_getRandomBool();
+
+      if (violates)
+      {
+        getGraph()->q_dot->ele[i] =
+          Math_getRandomNumber(1.01, 1.5)*queryJnt->speedLimit;
+      }
+
+      bool checkResult = checkLimits(false, false, true,
+                                     0.0, 0.0, 0.0, 0.0, 0.0);
+
+      if (checkResult == violates)
+      {
+        success = false;
+        if (verbose)
+        {
+          RMSG("%s: FAILURE: %g %g", queryJnt->name,
+               getGraph()->q_dot->ele[queryJnt->jointIndex],
+               queryJnt->speedLimit);
+        }
+
+      }
+    }
+
+  }
+
+
+
 
   return success;
 }
@@ -1664,8 +1751,8 @@ static void thresholdFtSensor(double* S_ft_f,
  *    f_task = J_task (J_sensor1# f_sensor1 + J_sensor2# f_sensor2 ...)
  *
  ******************************************************************************/
-void Rcs::ControllerBase::computeTaskForce_org(MatNd* ft_task,
-                                               const MatNd* activation) const
+void Rcs::ControllerBase::computeTaskForce(MatNd* ft_task,
+                                           const MatNd* activation) const
 {
   size_t nx = activation ? getActiveTaskDim(activation) : getTaskDim();
 
@@ -1687,6 +1774,7 @@ void Rcs::ControllerBase::computeTaskForce_org(MatNd* ft_task,
     }
 
     RcsSensor* loadCell = SENSOR;
+    RCHECK(loadCell->rawData->size <= 9);
     const double* S_ft = loadCell->rawData->ele;
     // RLOG(1," \n print the extra info %s ", loadCell->extraInfo);
 
@@ -1694,12 +1782,12 @@ void Rcs::ControllerBase::computeTaskForce_org(MatNd* ft_task,
 
     // filtering in sensor space and coordinate system
     // filter vector of sensor values
-    double* S_ft_f = RNSTALLOC(loadCell->rawData->size, double);
+    double S_ft_f[9];
 
     MatNd* thrds_abs = MatNd_create(loadCell->rawData->size, 1);
     // Here read the threshold from the xml
     // readTaskVectorFromXML(thrds_abs, "threshold");
-    MatNd_addConst(thrds_abs, 10);
+    MatNd_addConst(thrds_abs, 10.0);
 
     // threshold the ft sensor values
     thresholdFtSensor(S_ft_f, S_ft, thrds_abs, loadCell->rawData->size);
@@ -1760,29 +1848,28 @@ bool Rcs::ControllerBase::add(const ControllerBase& other,
                               const char* suffix,
                               const HTr* A_BP)
 {
-  bool success = RcsGraph_appendCopyOfGraph(getGraph(), NULL,
-                                            other.getGraph(), suffix, A_BP);
+  bool success = RcsGraph_appendCopyOfGraph(getGraph(), NULL, other.getGraph(),
+                                            suffix, A_BP);
+
   if (success == false)
   {
     return false;
   }
 
   const std::vector<Task*>& otherTasks = other.taskVec();
-  size_t otherTasksSize = otherTasks.size();
+  const size_t otherTasksSize = otherTasks.size();
 
   if (otherTasksSize == 0)
   {
     return true;
   }
 
-
-
   for (size_t i=0; i<otherTasksSize; ++i)
   {
     Task* copyOfOtherTask = otherTasks[i]->clone(this->graph);
 
     // Set the new task's name uniquely considering the suffix
-    if (suffix != NULL)
+    if (suffix)
     {
       copyOfOtherTask->setName(otherTasks[i]->getName() + std::string(suffix));
     }
@@ -1790,11 +1877,18 @@ bool Rcs::ControllerBase::add(const ControllerBase& other,
     const RcsBody* effector = copyOfOtherTask->getEffector();
     if (effector != NULL)
     {
-      std::string newName = std::string(otherTasks[i]->getEffector()->name);
-      if (suffix != NULL)
+      std::string newName;
+
+      if (otherTasks[i]->getEffector())
       {
-        newName += std::string(suffix);
+        newName.assign(otherTasks[i]->getEffector()->name);
       }
+
+      if (suffix)
+      {
+        newName.append(suffix);
+      }
+
       effector = RcsGraph_getBodyByName(this->graph, newName.c_str());
       RCHECK_MSG(effector, "Not found: %s", newName.c_str());
       copyOfOtherTask->setEffector(effector);
@@ -1803,11 +1897,18 @@ bool Rcs::ControllerBase::add(const ControllerBase& other,
     const RcsBody* refBdy = copyOfOtherTask->getRefBody();
     if (refBdy != NULL)
     {
-      std::string newName = std::string(otherTasks[i]->getRefBody()->name);
-      if (suffix != NULL)
+      std::string newName;
+
+      if (otherTasks[i]->getRefBody())
       {
-        newName += std::string(suffix);
+        newName.assign(otherTasks[i]->getRefBody()->name);
       }
+
+      if (suffix)
+      {
+        newName.append(suffix);
+      }
+
       refBdy = RcsGraph_getBodyByName(this->graph, newName.c_str());
       RCHECK_MSG(refBdy, "Not found: %s", newName.c_str());
       copyOfOtherTask->setRefBody(refBdy);
@@ -1816,15 +1917,57 @@ bool Rcs::ControllerBase::add(const ControllerBase& other,
     const RcsBody* refFrame = copyOfOtherTask->getRefFrame();
     if (refFrame != NULL)
     {
-      std::string newName = std::string(otherTasks[i]->getRefFrame()->name);
-      if (suffix != NULL)
+      std::string newName;
+
+      if (otherTasks[i]->getRefFrame())
       {
-        newName += std::string(suffix);
+        newName.assign(otherTasks[i]->getRefFrame()->name);
       }
+
+      if (suffix)
+      {
+        newName.append(suffix);
+      }
+
       refFrame = RcsGraph_getBodyByName(this->graph, newName.c_str());
       RCHECK_MSG(refFrame, "Not found: %s", newName.c_str());
       copyOfOtherTask->setRefFrame(refFrame);
     }
+
+    // Rename joint names for TaskJoint
+    if (dynamic_cast<TaskJoint*>(copyOfOtherTask))
+    {
+      TaskJoint* jntTask = dynamic_cast<TaskJoint*>(copyOfOtherTask);
+      std::string newName = std::string(jntTask->getJoint()->name);
+      if (suffix)
+      {
+        newName.append(suffix);
+      }
+      jntTask->setJoint(RcsGraph_getJointByName(getGraph(), newName.c_str()));
+      RCHECK_MSG(jntTask->getJoint(), "Not found: joint %s", newName.c_str());
+    }
+
+    // Rename joint names for TaskJoints
+    if (dynamic_cast<TaskJoints*>(copyOfOtherTask))
+    {
+      RLOG(0, "Copying joints task %s", copyOfOtherTask->getName().c_str());
+      TaskJoints* jntsTask = dynamic_cast<TaskJoints*>(copyOfOtherTask);
+
+      for (size_t i=0; i<jntsTask->getNumberOfTasks(); ++i)
+      {
+        TaskJoint* jntTask = dynamic_cast<TaskJoint*>(jntsTask->getSubTask(i));
+        RCHECK(jntTask);
+        std::string newName = std::string(jntTask->getJoint()->name);
+        if (suffix)
+        {
+          newName.append(suffix);
+        }
+        jntTask->setJoint(RcsGraph_getJointByName(getGraph(), newName.c_str()));
+        RCHECK_MSG(jntTask->getJoint(), "Not found: joint %s", newName.c_str());
+
+      }
+    }
+
 
     add(copyOfOtherTask);
   }
@@ -1891,6 +2034,8 @@ void Rcs::ControllerBase::computeAdmittance(MatNd* compliantFrame,
                                             const MatNd* Kp_ext,
                                             const MatNd* a_des)
 {
+  double cmplDelta_[6];
+
   for (size_t taskIdx = 0; taskIdx < this->tasks.size(); taskIdx++)
   {
     if (a_des->ele[taskIdx] <= 0.0)
@@ -1906,8 +2051,12 @@ void Rcs::ControllerBase::computeAdmittance(MatNd* compliantFrame,
 
     // angular Euler
     // const double t_treshold = 1.0; // Start above this threshold (in [Nm])
+    double* cmplDelta = cmplDelta_;
+    if (taskDim>6)
+    {
+      cmplDelta = new double[taskDim];
+    }
 
-    double* cmplDelta = RNSTALLOC(taskDim, double);
     calcAdmittanceDelta(cmplDelta, &ft_task->ele[xIdx], &Kp_ext->ele[xIdx],
                         f_treshold, taskDim); //0.50
 
@@ -1918,76 +2067,12 @@ void Rcs::ControllerBase::computeAdmittance(MatNd* compliantFrame,
                              &compliantFrame->ele[xIdx], cmplDelta, 1.0);
     }
 
+    if (taskDim>6)
+    {
+      delete [] cmplDelta;
+    }
 
   }   // for (int taskIdx = 0; taskIdx < this->tasks.size(); taskIdx++)
-
-}
-
-
-/*******************************************************************************
- * Computes the attractor control law to decay the Delta between compliant frame
-   and task frame.
- ******************************************************************************/
-void Rcs::ControllerBase::decayComplainceDelta(MatNd* dx_cmp,
-                                               const MatNd* dx_des_cmp,
-                                               const MatNd* K_att)
-{
-  // compute error between desired delta 'task' vector and current
-  MatNd* e_cmp = MatNd_create(getTaskDim(), 1);
-  MatNd_sub(e_cmp, dx_des_cmp, dx_cmp);
-
-
-  MatNd* temp_x_cmp = MatNd_create(getTaskDim(), 1);
-  // multiply error with attractor gain
-  MatNd_eleMul(temp_x_cmp, e_cmp, K_att);
-  // uddate Delta complaint 'task' vector
-  MatNd_addSelf(dx_cmp, temp_x_cmp);
-
-  MatNd_destroy(e_cmp);
-  MatNd_destroy(temp_x_cmp);
-}
-
-void Rcs::ControllerBase::genSecondOrderFilter4Sensors(std::vector<SecondOrderLPFND*>* SecOrderFilters_vec,
-                                                       double tmc, double dt)
-{
-  RCSGRAPH_TRAVERSE_SENSORS(this->graph)
-  {
-    if (SENSOR->type != RCSSENSOR_LOAD_CELL)
-    {
-      continue;
-    }
-    RcsSensor* loadCell = SENSOR;
-    // Here read the window size of the filter from the xml (PENDING!!!!)
-    SecondOrderLPFND* secOrderfilt = new SecondOrderLPFND(loadCell->rawData->ele,
-                                                          tmc, dt,
-                                                          loadCell->rawData->size);
-    SecOrderFilters_vec->push_back(secOrderfilt);
-
-  }
-
-}
-
-
-
-/******************************************************************************
- * initialiser of a vector of filters.
- * generates a filter for each LOAD_CELL sensor that the graph has
- *****************************************************************************/
-void Rcs::ControllerBase::genMedianFilter4Sensors(std::vector<MedianFilterND*>* MedFilters_vec)
-{
-
-  RCSGRAPH_TRAVERSE_SENSORS(this->graph)
-  {
-    if (SENSOR->type != RCSSENSOR_LOAD_CELL)
-    {
-      continue;
-    }
-    RcsSensor* loadCell = SENSOR;
-    // Here read the window size of the filter from the xml (PENDING!!!!)
-    MedianFilterND* meanfilt = new MedianFilterND(1, loadCell->rawData->ele, loadCell->rawData->size);
-    MedFilters_vec->push_back(meanfilt);
-
-  }
 
 }
 
@@ -2002,6 +2087,7 @@ void Rcs::ControllerBase::genMedianFilter4Sensors(std::vector<MedianFilterND*>* 
  *    with J_task J_task# = I , we get f_task = J_task J_sensor# f_sensor
  *
  ******************************************************************************/
+#if 0
 void Rcs::ControllerBase::computeTaskForce(MatNd* ft_task,
                                            const MatNd* activation,
                                            // std::vector<MedianFilterND*>* MedFilters_vec,
@@ -2049,9 +2135,12 @@ void Rcs::ControllerBase::computeTaskForce(MatNd* ft_task,
     }
 
     RcsSensor* loadCell = SENSOR;
+    RCHECK(loadCell->rawData->size <= 9);
+
     const double* S_ft_init = loadCell->rawData->ele;
     // clone the ft snsor values to clip them
-    double* S_ft =  VecNd_clone(S_ft_init, loadCell->rawData->size);
+    double S_ft[9];
+    VecNd_copy(S_ft, S_ft_init, loadCell->rawData->size);
 
     // clipping
     MatNd* clipLimitFT = MatNd_create(loadCell->rawData->size, 1);
@@ -2067,7 +2156,7 @@ void Rcs::ControllerBase::computeTaskForce(MatNd* ft_task,
     // ---
     // filtering in sensor space and coordinate system
     // filter vector of sensor values
-    double* S_ft_f = RNSTALLOC(loadCell->rawData->size, double);
+    double  S_ft_f[9];
     MatNd* thrds_abs = MatNd_create(loadCell->rawData->size, 1);
     // Here read the threshold from the xml (PENDING!!!!)
     MatNd_addConst(thrds_abs, 5.0);
@@ -2176,6 +2265,7 @@ void Rcs::ControllerBase::computeTaskForce(MatNd* ft_task,
   MatNd_destroy(pinvJ_sensor);
   MatNd_destroy(J_task);
 }
+#endif
 
 /*******************************************************************************
  *
@@ -2184,12 +2274,14 @@ void Rcs::ControllerBase::printX(const MatNd* x, const MatNd* a_des) const
 {
   for (size_t i = 0; i < getNumberOfTasks(); i++)
   {
-    size_t row = this->taskArrayIdx[i];
-
-    for (size_t j = 0; j < getTaskDim(i); j++)
+    if ((a_des==NULL) || (MatNd_get(a_des, i, 0)>0.0))
     {
-      printf("Task \"%s\"[%d]: %f\n", getTaskName(i).c_str(), (int) j,
-             MatNd_get(x, row+j, 0));
+      const size_t row = this->taskArrayIdx[i];
+      for (size_t j = 0; j < getTaskDim(i); j++)
+      {
+        printf("Task \"%s\"[%d]: %f\n", getTaskName(i).c_str(), (int) j,
+               MatNd_get(x, row+j, 0));
+      }
     }
   }
 }
@@ -2209,7 +2301,12 @@ bool Rcs::ControllerBase::getModelState(MatNd* q, const char* modelStateName,
  ******************************************************************************/
 bool Rcs::ControllerBase::checkLimits(bool checkJointLimits,
                                       bool checkCollisions,
-                                      bool checkJointVelocities) const
+                                      bool checkJointVelocities,
+                                      double jlMarginAngular,
+                                      double jlMarginLinear,
+                                      double collMargin,
+                                      double speedMarginAngular,
+                                      double speedMarginLinear) const
 {
   bool success = true;
 
@@ -2217,7 +2314,10 @@ bool Rcs::ControllerBase::checkLimits(bool checkJointLimits,
   if (checkJointLimits)
   {
     bool verbose = (RcsLogLevel >= 3) ? true : false;
-    unsigned int aor = RcsGraph_numJointLimitsViolated(getGraph(), verbose);
+    unsigned int aor = RcsGraph_numJointLimitsViolated(getGraph(),
+                                                       jlMarginAngular,
+                                                       jlMarginLinear,
+                                                       verbose);
     if (aor > 0)
     {
       success = false;
@@ -2234,7 +2334,7 @@ bool Rcs::ControllerBase::checkLimits(bool checkJointLimits,
   // declared to be const.
   if (checkCollisions && getCollisionMdl())
   {
-    const double distLimit = 0.001;
+    const double distLimit = collMargin;
     double minDist = RcsCollisionMdl_getMinDist(getCollisionMdl());
     if (minDist < distLimit)
     {
@@ -2249,29 +2349,29 @@ bool Rcs::ControllerBase::checkLimits(bool checkJointLimits,
     }
   }
 
-  // Speed limit check
+  // Speed limit check.
   if (checkJointVelocities)
   {
-    MatNd* q_dot = MatNd_clone(getGraph()->q_dot);
-    double scaling = RcsGraph_limitJointSpeeds(getGraph(), q_dot,
-                                               1.0, RcsStateFull);
-    if (scaling < 1.0)
+    RCSGRAPH_TRAVERSE_JOINTS(getGraph())
     {
-      success = false;
-      RLOG(3, "Joint speed limit violation");
-      RCSGRAPH_TRAVERSE_JOINTS(getGraph())
+      if (JNT->constrained)
       {
-        if ((!JNT->constrained) &&
-            (fabs(q_dot->ele[JNT->jointIndex]) >= JNT->speedLimit))
-        {
-          double sf = RcsJoint_isRotation(JNT) ? 180.0 / M_PI : 1.0;
-          RLOG(4, "%s: q_dot=%f   limit=%f [%s]", JNT->name,
-               sf*q_dot->ele[JNT->jointIndex],
-               sf*JNT->speedLimit, sf == 1.0 ? "m/sec" : "deg/sec");
-        }
+        continue;
+      }
+
+      const bool isRot = RcsJoint_isRotation(JNT);
+      const double margin = isRot ? speedMarginAngular : speedMarginLinear;
+      const double q_dot = getGraph()->q_dot->ele[JNT->jointIndex];
+
+      if ((q_dot<-JNT->speedLimit+margin) || (q_dot>JNT->speedLimit-margin))
+      {
+        success = false;
+        const double sf = isRot ? 180.0 / M_PI : 1.0;
+        RLOG(4, "%s: q_dot=%f   limit=%f [%s]", JNT->name, sf*q_dot,
+             sf*(JNT->speedLimit-margin), isRot ? "deg/sec" : "m/sec");
       }
     }
-    MatNd_destroy(q_dot);
+
   }
 
   return success;
@@ -2300,12 +2400,144 @@ void Rcs::ControllerBase::swapTaskVec(std::vector<Task*>& newTasks,
 }
 
 /*******************************************************************************
+ * Print the usage description if any
+ ******************************************************************************/
+void Rcs::ControllerBase::printUsage(const std::string& xmlFile)
+{
+  char cfgFile[256];
+  bool fileExists = Rcs_getAbsoluteFileName(xmlFile.c_str(), cfgFile);
+
+  if (!fileExists)
+  {
+    RLOG(1, "XML file \"%s\" not found in resource paths", xmlFile.c_str());
+    return;
+  }
+
+  xmlDocPtr docPtr;
+  xmlNodePtr node = parseXMLFile(cfgFile, "Controller", &docPtr);
+
+  if (node==NULL)
+  {
+    RLOG(1, "Node \"Controller\" not found in \"%s\"", cfgFile);
+    return;
+  }
+
+  xmlChar* usage = xmlGetProp(node, (const xmlChar*) "usage");
+
+  if (usage)
+  {
+    std::cout << "Usage: " << std::endl << usage << std::endl;
+  }
+  else
+  {
+    std::cout << "No usage description" << std::endl;
+  }
+
+  xmlFreeDoc(docPtr);
+}
+
+/*******************************************************************************
  *
  ******************************************************************************/
 void Rcs::ControllerBase::print() const
 {
+  // Print information for each task
   for (size_t i = 0; i < getNumberOfTasks(); i++)
   {
     tasks[i]->print();
   }
+
+  printUsage(this->xmlFile);
+}
+
+/*******************************************************************************
+ * Calculate one step of the inverse dynamics: T = M*aq + h + g
+ *
+ *      Here we neglect the influence of the accelerations of the
+ *      kinematically driven joints. That's fine if there's no large
+ *      inertia being accelerated, such as in the case of the finger
+ *      movements. However, if the whole robot is for instance attached to
+ *      a kinematically driven torso, this must be considered.
+ ******************************************************************************/
+void Rcs::ControllerBase::computeInvDynJointSpace(MatNd* T_des,
+                                                  const RcsGraph* graph,
+                                                  const MatNd* q_des,
+                                                  const MatNd* qp_des,
+                                                  const MatNd* qpp_des,
+                                                  double positionGain,
+                                                  double velocityGain)
+{
+  const unsigned int nq = graph->nJ;
+  MatNd* M       = MatNd_create(nq, nq);
+  MatNd* g       = MatNd_create(nq, 1);
+  MatNd* h       = MatNd_create(nq, 1);
+  MatNd* aq      = MatNd_create(graph->dof, 1);
+  MatNd* qp_temp = MatNd_create(1, nq);
+
+  if (velocityGain==-1.0)
+  {
+    velocityGain = 0.5*sqrt(4.0*positionGain);
+  }
+
+  const MatNd* q_curr = graph->q;
+  MatNd_reshapeAndSetZero(T_des, nq, 1);
+
+  // Dynamics: Mass matrix, gravity load and h-vector
+  RcsGraph_computeKineticTerms(graph, M, h, g);
+
+  // aq = -kp*(q-q_des)
+  MatNd_sub(aq, q_curr, q_des);
+  RcsGraph_stateVectorToIKSelf(graph, aq);
+  MatNd_constMulSelf(aq, -positionGain);
+
+  // Get the current joint velocities
+  RcsGraph_stateVectorToIK(graph, graph->q_dot, qp_temp);
+
+  // aq = aq  -kd*qp_curr + kd*qp_des
+  MatNd_constMulAndAddSelf(aq, qp_temp, -velocityGain);
+
+  if (qp_des != NULL)
+  {
+    MatNd_constMulAndAddSelf(aq, qp_des, velocityGain);
+  }
+
+  if (qpp_des != NULL)
+  {
+    MatNd_addSelf(aq, qpp_des);  // +qpp_des
+  }
+
+  // Set the speed of the kinematic joints to zero
+  RCSGRAPH_TRAVERSE_JOINTS(graph)
+  {
+    if ((JNT->ctrlType!=RCSJOINT_CTRL_TORQUE) && (JNT->jacobiIndex!=-1))
+    {
+      MatNd_set(aq, JNT->jacobiIndex, 0, 0.0);
+    }
+  }
+
+  // Add gravity and coriolis compensation: u += h + Fg
+  // u = M*a + h + g
+  MatNd_reshape(T_des, nq, 1);
+  MatNd_mul(T_des, M, aq);   // Tracking error
+  MatNd_subSelf(T_des, h);   // Cancellation of coriolis forces
+  MatNd_subSelf(T_des, g);   // Cancellation of gravity forces
+
+  MatNd_destroy(M);
+  MatNd_destroy(g);
+  MatNd_destroy(h);
+  MatNd_destroy(aq);
+  MatNd_destroy(qp_temp);
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Rcs::ControllerBase::computeInvDynJointSpace(MatNd* T_des,
+                                                  const RcsGraph* graph,
+                                                  const MatNd* q_des,
+                                                  double positionGain,
+                                                  double velocityGain)
+{
+  computeInvDynJointSpace(T_des, graph, q_des, NULL, NULL,
+                          positionGain, velocityGain);
 }

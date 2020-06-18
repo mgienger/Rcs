@@ -35,6 +35,7 @@
 *******************************************************************************/
 
 #include "TaskDistance3D.h"
+#include "TaskDistance.h"
 #include "TaskFactory.h"
 #include "Rcs_typedef.h"
 #include "Rcs_macros.h"
@@ -59,7 +60,7 @@ Rcs::TaskDistance3D::TaskDistance3D(const std::string& className_,
                                     int dim):
   TaskGenericIK(className_, node, _graph, dim)
 {
-  if (getDim() == 3)
+  if (getClassName()=="Distance3D")
   {
     double guiMax[3], guiMin[3];
     Vec3d_set(guiMax, 2.5, 2.5, 2.5);
@@ -67,9 +68,9 @@ Rcs::TaskDistance3D::TaskDistance3D(const std::string& className_,
     getXMLNodePropertyVec3(node, "guiMax", guiMax);
     getXMLNodePropertyVec3(node, "guiMin", guiMin);
 
-    getParameter(0)->setParameters(guiMin[0], guiMax[0], 1.0, "X [m]");
-    getParameter(1)->setParameters(guiMin[1], guiMax[1], 1.0, "Y [m]");
-    getParameter(2)->setParameters(guiMin[2], guiMax[2], 1.0, "Z [m]");
+    resetParameter(Task::Parameters(guiMin[0], guiMax[0], 1.0, "X [m]"));
+    addParameter(Task::Parameters(guiMin[1], guiMax[1], 1.0, "Y [m]"));
+    addParameter(Task::Parameters(guiMin[2], guiMax[2], 1.0, "Z [m]"));
   }
 
 }
@@ -86,7 +87,6 @@ Rcs::TaskDistance3D::TaskDistance3D(const TaskDistance3D& src,
 /*******************************************************************************
  * Constructor based on body pointers
  ******************************************************************************/
-//! \todo Memory leak when derieved class calls params.clear()
 Rcs::TaskDistance3D::TaskDistance3D(RcsGraph* graph_,
                                     const RcsBody* effector,
                                     const RcsBody* refBdy) : TaskGenericIK()
@@ -94,16 +94,14 @@ Rcs::TaskDistance3D::TaskDistance3D(RcsGraph* graph_,
   this->graph = graph_;
   setClassName("Distance3D");
   setName("Dist3D " + std::string(effector ? effector->name : "NULL") + "-"
-          + std::string(refBdy ? refBdy->name : NULL));
+          + std::string(refBdy ? refBdy->name : "NULL"));
   setDim(3);
   setEffector(effector);
   setRefBody(refBdy);
   setRefFrame(refBdy);
-  std::vector<Parameters*>& params = getParameters();
-  params.clear();
-  params.push_back(new Task::Parameters(-1.0, 1.0, 1.0, "X [m]"));
-  params.push_back(new Task::Parameters(-1.0, 1.0, 1.0, "Y [m]"));
-  params.push_back(new Task::Parameters(-1.0, 1.0, 1.0, "Z [m]"));
+  resetParameter(Task::Parameters(-1.0, 1.0, 1.0, "X [m]"));
+  addParameter(Task::Parameters(-1.0, 1.0, 1.0, "Y [m]"));
+  addParameter(Task::Parameters(-1.0, 1.0, 1.0, "Z [m]"));
 }
 
 /*******************************************************************************
@@ -275,24 +273,7 @@ void Rcs::TaskDistance3D::computeH(MatNd* H) const
 bool Rcs::TaskDistance3D::isValid(xmlNode* node, const RcsGraph* graph)
 {
   bool success = Task::isValid(node, graph, "Distance3D");
-
-  char taskName[256] = "Unnamed task";
-  getXMLNodePropertyStringN(node, "name", taskName, 256);
-
-  // This task requires an effector and a reference body
-  if (getXMLNodeProperty(node, "effector")==false)
-  {
-    RLOG(3, "Task \"%s\" requires \"effector\", none found", taskName);
-    success = false;
-  }
-
-  if ((getXMLNodeProperty(node, "refBdy")==false) &&
-      (getXMLNodeProperty(node, "refBody")==false))
-  {
-    RLOG(3, "Task \"%s\" requires \"refBdy\" or \"refBody\", none found",
-         taskName);
-    success = false;
-  }
+  success = Rcs::TaskDistance::hasDistanceFunction(node, graph) && success;
 
   return success;
 }

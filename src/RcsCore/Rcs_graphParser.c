@@ -36,6 +36,7 @@
 
 #include "Rcs_graphParser.h"
 #include "Rcs_URDFParser.h"
+#include "Rcs_graphOpenRAVEParser.h"
 #include "Rcs_typedef.h"
 #include "Rcs_body.h"
 #include "Rcs_shape.h"
@@ -268,7 +269,7 @@ static RcsShape* RcsBody_initShape(xmlNodePtr node, const RcsBody* body,
 
 
   // Compute type
-  bool distance = true, graphics = true, physics = true;
+  bool distance = true, graphics = true, physics = true, softPhysics = false;
 
   // Physics computation is not carried out for non-physics objects by default.
   if (body->physicsSim == RCSBODY_PHYSICS_NONE)
@@ -308,6 +309,7 @@ static RcsShape* RcsBody_initShape(xmlNodePtr node, const RcsBody* body,
   getXMLNodePropertyBoolString(node, "distance", &distance);
   getXMLNodePropertyBoolString(node, "physics", &physics);
   getXMLNodePropertyBoolString(node, "graphics", &graphics);
+  getXMLNodePropertyBoolString(node, "softPhysics", &softPhysics);
 
   if (distance == true)
   {
@@ -320,6 +322,10 @@ static RcsShape* RcsBody_initShape(xmlNodePtr node, const RcsBody* body,
   if (graphics == true)
   {
     shape->computeType |= RCSSHAPE_COMPUTE_GRAPHICS;
+  }
+  if (softPhysics == true)
+  {
+    shape->computeType |= RCSSHAPE_COMPUTE_SOFTPHYSICS;
   }
 
   // Marker id
@@ -455,11 +461,11 @@ static RcsShape* RcsBody_initShape(xmlNodePtr node, const RcsBody* body,
     if (shape->type == RCSSHAPE_SPHERE)
     {
       bool success = !getXMLNodeProperty(node, "length");
-      RCHECK_MSG(success, "%s", body->name);
+      RCHECK_MSG(success, "Found length specifier in sphere: %s", body->name);
       success = getXMLNodeProperty(node, "radius");
       RCHECK_MSG(success, "%s", body->name);
       success = !getXMLNodeProperty(node, "extents");
-      RCHECK_MSG(success, "%s", body->name);
+      RCHECK_MSG(success, "Found extents specifier in sphere: %s", body->name);
     }
 
     // Lets be pedantic with the configuration file: Disallow "radius"
@@ -467,11 +473,9 @@ static RcsShape* RcsBody_initShape(xmlNodePtr node, const RcsBody* body,
     if (shape->type == RCSSHAPE_SSR)
     {
       bool success = !getXMLNodeProperty(node, "length");
-      RCHECK_MSG(success,
-                 "SSR of body \"%s\" has length tag!", body->name);
+      RCHECK_MSG(success, "SSR of body \"%s\" has length tag!", body->name);
       success = !getXMLNodeProperty(node, "radius");
-      RCHECK_MSG(success,
-                 "SSR of body \"%s\" has radius tag!", body->name);
+      RCHECK_MSG(success, "SSR of body \"%s\" has radius tag!", body->name);
     }
 
     // Lets be pedantic with the configuration file: Disallow "extents"
@@ -484,8 +488,7 @@ static RcsShape* RcsBody_initShape(xmlNodePtr node, const RcsBody* body,
       RCHECK_MSG(success, "TORUS of body \"%s\" has no radius tag!",
                  body->name);
       success = !getXMLNodeProperty(node, "extents");
-      RCHECK_MSG(success, "TORUS of body \"%s\" has extents tag, remove it!",
-                 body->name);
+      RCHECK_MSG(success, "TORUS of body \"%s\" has extents tag", body->name);
     }
 
   }   // REXEC(1)
@@ -534,10 +537,16 @@ static RcsJoint* RcsBody_initJoint(RcsGraph* self,
   }
   else
   {
-    jnt->name = RNALLOC(strlen("unnamed joint") + strlen(suffix) + 1, char);
+    jnt->name = RNALLOC(strlen("unnamed joint") + strlen(suffix) + 8 + 1, char);
     strcpy(jnt->name, "unnamed joint");
     strcat(jnt->name, suffix);
-    RLOG(4, "A joint between bodies \"%s\" and \"%s\" has no name - using \""
+
+    static int uniqueId = 0;
+    char uniqueIdStr[8];
+    snprintf(uniqueIdStr, 8, " %d", uniqueId++);
+    strcat(jnt->name, uniqueIdStr);
+
+    RLOG(5, "A joint between bodies \"%s\" and \"%s\" has no name - using \""
          "unnamed joint\"", b->name, b->parent ? b->parent->name : "NULL");
   }
 
@@ -638,14 +647,38 @@ static RcsJoint* RcsBody_initJoint(RcsGraph* self,
   }
 
   // Joint range (must go after joint type)
-  if (getXMLNodePropertyVec3(node, "range", ka))
-  {
-    jnt->q_min = ka[0];
-    jnt->q0 = ka[1];
-    jnt->q_max = ka[2];
 
-    RCHECK(jnt->q_min <= jnt->q_max);
-    RCHECK((jnt->q0 >= jnt->q_min) && (jnt->q0 <= jnt->q_max));
+  unsigned int rangeEle = getXMLNodeNumStrings(node, "range");
+
+  //if (getXMLNodePrope(rtyVec3(node, "range", ka))
+  if ((rangeEle==1) || (rangeEle==2) || (rangeEle==3))
+  {
+    bool hasRange23 = getXMLNodePropertyVecN(node, "range", ka, rangeEle);
+    RCHECK(hasRange23);
+
+    jnt->q_min = ka[0];
+
+    if (rangeEle==3)
+    {
+      jnt->q0 = ka[1];
+      jnt->q_max = ka[2];
+    }
+    else if (rangeEle==2)
+    {
+      jnt->q0 = 0.5*(ka[1]+ka[0]);
+      jnt->q_max = ka[1];
+    }
+    else if (rangeEle==1)
+    {
+      jnt->q_min = -ka[0];
+      jnt->q0 = 0.0;
+      jnt->q_max = ka[0];
+    }
+
+    RCHECK_MSG(jnt->q_min <= jnt->q_max, "q_min=%f q_max=%f",
+               jnt->q_min, jnt->q_max);
+    RCHECK_MSG((jnt->q0 >= jnt->q_min) && (jnt->q0 <= jnt->q_max),
+               "q_min=%f q0=%f q_max=%f", jnt->q_min, jnt->q0, jnt->q_max);
 
     if (RcsJoint_isRotation(jnt) == true)
     {
@@ -1310,6 +1343,76 @@ static void RcsGraph_parseBodies(xmlNodePtr node,
     RcsGraph_parseBodies(node->next, self, gCol, ndExt,
                          parentGroup, A, firstInGroup, level, root, verbose);
   }
+
+
+
+
+
+
+
+
+
+  else if (isXMLNodeName(node, "OpenRave"))
+  {
+    // The node points to an OpenRave file
+
+    char tmp[256];
+    strcpy(tmp, "");
+
+    // check if prev tag is provided --> first body of openrave graph will be
+    // attached to it
+    RcsBody* pB = NULL;
+    if (getXMLNodePropertyStringN(node, "prev", tmp, 64) > 0)
+    {
+      pB = RcsGraph_getBodyByName(self, tmp);
+      RCHECK_MSG(pB, "Body \"%s\" not found, which was specified as prev for an OpenRave node", tmp);
+    }
+
+    // Get filename
+    strcpy(tmp, "");
+    getXMLNodePropertyStringN(node, "file", tmp, 64);
+
+    // check if q0 is provided and read it
+    double* q0 = NULL;
+    unsigned int nq = 0;
+    if (getXMLNodeProperty(node, "q0"))
+    {
+      RLOGS(1, "Found q0 tag --> overriding initial values of OpenRave file");
+
+      // get number of provided q0 values
+      char q_str[512];
+      getXMLNodePropertyStringN(node, "q0", q_str, 512);
+      nq = String_countSubStrings(q_str, " ");
+
+      // read q0 values
+      q0 = RNALLOC(nq, double);
+      getXMLNodePropertyVecN(node, "q0", q0, nq);
+
+      // convert to radian
+      VecNd_constMulSelf(q0, M_PI / 180.0, nq);
+    }
+
+    // parse OpenRave file
+    RcsGraph_createBodiesFromOpenRAVEFile(self, pB, tmp, q0, nq);
+
+    // cleanup
+    RFREE(q0);
+
+    RcsGraph_parseBodies(node->next, self, gCol, suffix,
+                         parentGroup, A, firstInGroup, level, root, verbose);
+  }
+
+
+
+
+
+
+
+
+
+
+
+
   else if (isXMLNodeName(node, "URDF"))
   {
     // check if prev tag is provided --> first body of URDF graph will be
@@ -1537,7 +1640,8 @@ bool RcsGraph_setModelStateFromXML(RcsGraph* self, const char* modelStateName,
 }
 
 /*******************************************************************************
- *
+ * We make a copy, since the RcsGraph_parseModelState() function changes the
+ * graph.
  ******************************************************************************/
 bool RcsGraph_getModelStateFromXML(MatNd* q, const RcsGraph* self,
                                    const char* modelStateName, int timeStamp)
@@ -1560,6 +1664,7 @@ bool RcsGraph_getModelStateFromXML(MatNd* q, const RcsGraph* self,
 
   if (node == NULL)
   {
+    RcsGraph_destroy(copyOfGraph);
     xmlFreeDoc(doc);
     return false;
   }

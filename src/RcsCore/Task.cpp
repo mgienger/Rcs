@@ -42,37 +42,40 @@
 #include "Rcs_utils.h"
 #include "Rcs_joint.h"
 #include "Rcs_kinematics.h"
+#include "StackVec.h"
 
 #include <cfloat>
+
+typedef Rcs::StackVec<double, 8> TaskVec;
 
 
 
 /*******************************************************************************
  * Constructor of nested class Parameters
  ******************************************************************************/
-Rcs::Task::Parameters::Parameters(const double minVal,
-                                  const double maxVal,
-                                  const double scaleFactor,
-                                  const std::string& name):
-  minVal(minVal),
-  maxVal(maxVal),
-  scale_factor(scaleFactor),
-  name(name)
+Rcs::Task::Parameters::Parameters(const double minVal_,
+                                  const double maxVal_,
+                                  const double scaleFactor_,
+                                  const std::string& name_):
+  minVal(minVal_),
+  maxVal(maxVal_),
+  scaleFactor(scaleFactor_),
+  name(name_)
 {
 }
 
 /*******************************************************************************
  * Setter method of nested class Parameters
  ******************************************************************************/
-void Rcs::Task::Parameters::setParameters(const double minVal,
-                                          const double maxVal,
-                                          const double scaleFactor,
-                                          const std::string& name)
+void Rcs::Task::Parameters::setParameters(const double minVal_,
+                                          const double maxVal_,
+                                          const double scaleFactor_,
+                                          const std::string& name_)
 {
-  this->minVal = minVal;
-  this->maxVal = maxVal;
-  this->scale_factor = scaleFactor;
-  this->name.assign(name);
+  this->minVal = minVal_;
+  this->maxVal = maxVal_;
+  this->scaleFactor = scaleFactor_;
+  this->name.assign(name_);
 }
 
 /*******************************************************************************
@@ -102,7 +105,7 @@ Rcs::Task::Task(const std::string& className_,
   className(className_)
 {
   RCHECK(node);
-  RCHECK(graph_);
+  RCHECK(graph);
 
   // parse the xml node
   // Task name
@@ -113,7 +116,7 @@ Rcs::Task::Task(const std::string& className_,
   // initialize parameter list with default values
   for (unsigned int i = 0; i < getDim(); i++)
   {
-    this->params.push_back(new Task::Parameters(-1.0, 1.0, 1.0, "unnamed"));
+    addParameter(Parameters(-1.0, 1.0, 1.0, "unnamed"));
   }
 
   // Parse end effectors
@@ -159,10 +162,6 @@ Rcs::Task::Task(const std::string& className_,
     this->refFrame = this->refBody;
   }
 
-
-  // store all xml properties
-  //this->properties.fromXML(node);
-
   RLOG(5, "constructed task \"%s\" of type %s: dim: %d, dimIK: %d",
        getName().c_str(), className.c_str(), getDim(), getDim());
 }
@@ -176,18 +175,10 @@ Rcs::Task::Task(const Task& copyFromMe, RcsGraph* newGraph):
   refFrame(NULL),
   taskDim(copyFromMe.taskDim),
   name(copyFromMe.name),
-  className(copyFromMe.className)
+  className(copyFromMe.className),
+  params(copyFromMe.params)
 {
   this->graph = newGraph ? newGraph : copyFromMe.graph;
-
-  // clone parameter structs
-  for (size_t i = 0; i < copyFromMe.params.size(); i++)
-  {
-    Task::Parameters* param = copyFromMe.params[i];
-
-    // default copy constructor should work here
-    this->params.push_back(new Task::Parameters(*param));
-  }
 
   // End effectors
   if (newGraph != NULL)
@@ -221,11 +212,6 @@ Rcs::Task::Task(const Task& copyFromMe, RcsGraph* newGraph):
 Rcs::Task::~Task()
 {
   std::vector<Parameters*>::iterator it;
-
-  for (it = this->params.begin(); it != this->params.end(); ++it)
-  {
-    delete(*it);
-  }
 }
 
 /*******************************************************************************
@@ -274,22 +260,47 @@ RcsGraph* Rcs::Task::getGraph() const
  ******************************************************************************/
 void Rcs::Task::print() const
 {
-  printf("Task %s: type %s\n", getName().c_str(), getClassName().c_str());
+  printf("Task \"%s\": type \"%s\" with %d dimensions\n",
+         getName().c_str(), getClassName().c_str(), getDim());
+
+  if (getEffector())
+  {
+    printf("Effector: \"%s\"\n", getEffector()->name);
+  }
+
+  if (getRefBody())
+  {
+    printf("Reference body: \"%s\"\n", getRefBody()->name);
+  }
+
+  if (getRefFrame())
+  {
+    printf("Reference frame: \"%s\"\n", getRefFrame()->name);
+  }
 }
 
 /*******************************************************************************
  * Returns the parameters for task dimension index
  ******************************************************************************/
-Rcs::Task::Parameters* Rcs::Task::getParameter(size_t index) const
+Rcs::Task::Parameters& Rcs::Task::getParameter(size_t index)
 {
   RCHECK_MSG(index<this->params.size(), "%zu %zu", index, this->params.size());
-  return this->params[index];
+  return this->params.at(index);
+}
+
+/*******************************************************************************
+ * Returns the parameters for task dimension index
+ ******************************************************************************/
+const Rcs::Task::Parameters& Rcs::Task::getParameter(size_t index) const
+{
+  RCHECK_MSG(index<this->params.size(), "%zu %zu", index, this->params.size());
+  return this->params.at(index);
 }
 
 /*******************************************************************************
  * Returns the whole parameter list
  ******************************************************************************/
-const std::vector<Rcs::Task::Parameters*>& Rcs::Task::getParameters() const
+const std::vector<Rcs::Task::Parameters>& Rcs::Task::getParameters() const
 {
   return this->params;
 }
@@ -297,9 +308,34 @@ const std::vector<Rcs::Task::Parameters*>& Rcs::Task::getParameters() const
 /*******************************************************************************
  * Returns the whole parameter list
  ******************************************************************************/
-std::vector<Rcs::Task::Parameters*>& Rcs::Task::getParameters()
+std::vector<Rcs::Task::Parameters>& Rcs::Task::getParameters()
 {
   return this->params;
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Rcs::Task::clearParameters()
+{
+  params.clear();
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Rcs::Task::addParameter(const Task::Parameters& newParam)
+{
+  params.push_back(newParam);
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Rcs::Task::resetParameter(const Task::Parameters& newParam)
+{
+  clearParameters();
+  params.push_back(newParam);
 }
 
 /*******************************************************************************
@@ -373,7 +409,7 @@ void Rcs::Task::computeXpp_ik(double* x_ddot, const MatNd* q_ddot) const
  ******************************************************************************/
 void Rcs::Task::computeDX(double* dx, const double* x_des) const
 {
-  double* x_curr = RNSTALLOC(getDim(), double);
+  TaskVec x_curr(getDim());
   computeX(x_curr);
   computeDX(dx, x_des, x_curr);
 }
@@ -436,7 +472,7 @@ double Rcs::Task::computeTaskCost(const double* x_des,
 {
   unsigned int i, nx = getDim();
   double goalCost = 0.0;
-  double* dx = RNSTALLOC(nx, double);
+  TaskVec dx(nx);
 
   computeDX(dx, x_des);
 
@@ -510,7 +546,7 @@ void Rcs::Task::computeAX(double* a_res,
   const unsigned int dim = getDim();
 
   // calculate position error dx using the task's specialized function
-  double* dx = RNSTALLOC(dim, double);
+  TaskVec dx(dim);
   this->computeDX(dx, x_des);
 
   // a_res = kp * dx
@@ -518,14 +554,14 @@ void Rcs::Task::computeAX(double* a_res,
 
   // ax += kd * dx_dot
   // calculate velocity error dx_dot using the task's specialized function
-  double* dx_dot = RNSTALLOC(dim, double);
+  TaskVec dx_dot(dim);
   computeDXp(dx_dot, x_dot_des);
   VecNd_constMulAndAddSelf(a_res, dx_dot, kd, dim);
 
   // ax += ff_x_ddot
   if (x_ddot_des != NULL)
   {
-    double* ff_x_ddot = RNSTALLOC(dim, double);
+    TaskVec ff_x_ddot(dim);
     this->computeFfXpp(ff_x_ddot, x_ddot_des);
     VecNd_addSelf(a_res, ff_x_ddot, dim);
   }
@@ -536,7 +572,7 @@ void Rcs::Task::computeAX(double* a_res,
   if (integral_x != NULL)
   {
     // x_error = -dx*selection
-    double* x_error = RNSTALLOC(dim, double);
+    TaskVec x_error(dim);
 
     if (S_des != NULL)
     {
@@ -549,8 +585,7 @@ void Rcs::Task::computeAX(double* a_res,
 
     // x_int += gain*x_error
     // the gain is scaled by the activation
-    VecNd_constMulAndAddSelf(integral_x, x_error, a_des*ki,
-                             dim);
+    VecNd_constMulAndAddSelf(integral_x, x_error, a_des*ki, dim);
 
     // saturate integral term to avoid windup
     // the clipping is scaled by the activation
@@ -587,7 +622,7 @@ void Rcs::Task::computeAF(double* ft_res,
   if (ft_task != NULL)
   {
     // ft_error = (ft_des - ft_current)
-    double* ft_error = RNSTALLOC(dim, double);
+    TaskVec ft_error(dim);
     VecNd_sub(ft_error, ft_des, ft_task, dim);
 
     // proportional part
@@ -612,6 +647,7 @@ void Rcs::Task::computeAF(double* ft_res,
       // add integral part
       VecNd_addSelf(ft_res, ft_int, dim);
     }
+
   }
 }
 
@@ -673,19 +709,20 @@ bool Rcs::Task::testJacobian(double errorLimit,
   const unsigned int nx = getDim();
 
   bool success = true;
-  double* x0 = RNSTALLOC(nx, double);
-  double* x1 = RNSTALLOC(nx, double);
-  double* dx = RNSTALLOC(nx, double);
+  MatNd* x0, *x1, *dx;
+  MatNd_create2(x0, nx, 1);
+  MatNd_create2(x1, nx, 1);
+  MatNd_create2(dx, nx, 1);
 
   // Set the state.
-  RcsGraph_setState(this->graph, NULL, NULL);
+  RcsGraph_computeForwardKinematics(this->graph, NULL, NULL);
 
   // Memorize the graph's state for the finite difference computation
   MatNd* q0;
   MatNd_clone2(q0, this->graph->q);
 
   // Compute the task vector for the current state
-  computeX(x0);
+  computeX(x0->ele);
 
   // Compute the Jacobian analytically for the given state
   MatNd* J = NULL;
@@ -708,25 +745,26 @@ bool Rcs::Task::testJacobian(double errorLimit,
       continue;
     }
 
-    double delta = 1.0e-6;
     // Determine the finite difference step according to the joint type:
-    // rotational joint: 0.1 degree, translational joint: 0.1mm
-    delta = RcsJoint_isRotation(JNT) ? 0.01*(M_PI/180.0) : 0.01*0.001;
+    // rotational joint: 0.01 degree, translational joint: 0.01mm
+    double delta = RcsJoint_isRotation(JNT) ? 0.01*(M_PI/180.0) : 0.01*0.001;
 
     // Calculate task variable x1 after applying finite difference step
     MatNd_copy(this->graph->q, q0);
     MatNd_addToEle(this->graph->q, JNT->jointIndex, 0, delta);
 
-    // MatNd_printTwoArraysDiff(q0, graph->q, 8);
-
-    RcsGraph_setState(this->graph, NULL, NULL);
-    computeX(x1);
+    // Here we don't use the RcsGraph_setState() function, since it also
+    // updates potentially kinematically coupled joints. Here we don't
+    // consider any kinematic coupling, and therefore don't want to see
+    // them in the pertubations of the finite differences.
+    RcsGraph_computeForwardKinematics(this->graph, NULL, NULL);
+    computeX(x1->ele);
 
     // Reset state and calculate dx
     RcsGraph_setState(this->graph, q0, NULL);
-    computeDX(dx, x1);
-    VecNd_constMulSelf(dx, 1.0 / delta, nx);
-    MatNd_setColumn(J_fd, JNT->jacobiIndex, dx, nx);
+    computeDX(dx->ele, x1->ele);
+    VecNd_constMulSelf(dx->ele, 1.0 / delta, nx);
+    MatNd_setColumn(J_fd, JNT->jacobiIndex, dx->ele, nx);
   }
 
   // Compute error: percentual difference of solutions
@@ -853,6 +891,10 @@ bool Rcs::Task::testJacobian(double errorLimit,
   MatNd_destroy(J_err);
   MatNd_destroy(J);
 
+  MatNd_destroy(x0);
+  MatNd_destroy(x1);
+  MatNd_destroy(dx);
+
   return success;
 }
 
@@ -874,12 +916,12 @@ bool Rcs::Task::testVelocity(double maxErr) const
   double err = MatNd_rmsqError(x1, x2);
   bool success = err < maxErr;
 
-  RLOG(1, "Task %s: velocity test %s: rms error = %g",
+  RLOG(2, "Task %s: velocity test %s: rms error = %g",
        getName().c_str(), success ? "SUCCESS" : "FAILURE", err);
 
-  REXEC(2)
+  REXEC(3)
   {
-    RLOG(2, "\nJ*q_dot   computeXp_ik()   diff");
+    RLOG(3, "\nJ*q_dot   computeXp_ik()   diff");
     MatNd_printTwoArraysDiff(x1, x2, 6);
   }
 
@@ -1047,6 +1089,7 @@ void Rcs::Task::projectTaskForce(MatNd* ft_task,
   MatNd_destroy(J_sensor);
   MatNd_destroy(pinvJ_sensor);
   MatNd_destroy(J_task);
+  MatNd_destroy(JJt);
 }
 
 /*******************************************************************************

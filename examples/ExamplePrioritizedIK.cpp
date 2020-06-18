@@ -279,9 +279,6 @@ int main(int argc, char** argv)
         v->add(hud);
         v->add(kc);
         v->add(dragger);
-        v->setCameraHomePosition(osg::Vec3d(2.5,  1.0, 1.8),
-                                 osg::Vec3d(0.0, -0.2, 0.8),
-                                 osg::Vec3d(0.0, 0.05, 1.0));
         v->runInThread(mtx);
 
         // Launch the task widget
@@ -506,15 +503,12 @@ int main(int argc, char** argv)
         v->add(gn);
         v->add(hud);
         v->add(kc);
-        v->setCameraHomePosition(osg::Vec3d(2.5,  1.0, 1.8),
-                                 osg::Vec3d(0.0, -0.2, 0.8),
-                                 osg::Vec3d(0.0, 0.05, 1.0));
         v->runInThread(mtx);
 
         // Launch the dx widget
-        MatNdWidget* mw = MatNdWidget::create(dx_gui, x_curr,
-                                              -1.0, 1.0, "dx",
-                                              &graphLock);
+        Rcs::MatNdWidget* mw = Rcs::MatNdWidget::create(dx_gui, x_curr,
+                                                        -1.0, 1.0, "dx",
+                                                        &graphLock);
 
         std::vector<std::string> labels;
         for (size_t id=0; id<controller.getNumberOfTasks(); id++)
@@ -523,15 +517,15 @@ int main(int argc, char** argv)
           {
             labels.push_back(controller.getTaskName(id) +
                              std::string(": ") +
-                             controller.getTask(id)->getParameter(j)->name);
+                             controller.getTask(id)->getParameter(j).name);
           }
         }
 
         mw->setLabels(labels);
 
         // Launch the widget for the activations
-        mw = MatNdWidget::create(a_des, a_des,
-                                 0.0, 1.0, "activations", &graphLock);
+        mw = Rcs::MatNdWidget::create(a_des, a_des,
+                                      0.0, 1.0, "activations", &graphLock);
 
         labels.clear();
         for (size_t id=0; id<controller.getNumberOfTasks(); id++)

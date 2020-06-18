@@ -719,9 +719,14 @@ bool setNodeMaterial(const std::string& matString, osg::Node* node,
   material->setSpecular(osg::Material::FRONT_AND_BACK, matDataPtr->spec);
   material->setShininess(osg::Material::FRONT_AND_BACK, matDataPtr->shininess);
 
-  if (alpha >= 0.0 && alpha <= 1.0)
+  if ((alpha >= 0.0) && (alpha <= 1.0))
   {
     material->setAlpha(osg::Material::FRONT_AND_BACK, alpha);
+  }
+  else
+  {
+    RLOG(5, "Material %s: Ignoring alpha value %.16f, must be [0 ... 1]",
+         matString.c_str(), alpha);
   }
 
   // Assign material through state set
@@ -1232,5 +1237,41 @@ void getGeodes(osg::Node* node, std::vector<osg::Geode*>& geodes)
   }
 }
 
-} // namespace Rcs
+class NodeFinder : public osg::NodeVisitor
+{
+public:
+  NodeFinder(std::string nodeName) :
+    osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN),
+    searchName(nodeName)
+  {
+  }
 
+  virtual void apply(osg::Node& tNnode)
+  {
+    if (searchName == tNnode.getName())
+    {
+      node = &tNnode;
+    }
+
+    // Keep traversing the rest of the scene graph.
+    traverse(tNnode);
+  }
+
+  osg::Node* getNode()
+  {
+    return node.get();
+  }
+
+protected:
+  std::string searchName;
+  osg::ref_ptr<osg::Node> node;
+};
+
+osg::Node* findNamedNodeRecursive(osg::Node* root, std::string nodeName)
+{
+  NodeFinder nf(nodeName);
+  root->accept(nf);
+  return nf.getNode();
+}
+
+} // namespace Rcs

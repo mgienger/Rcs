@@ -39,7 +39,6 @@
 #include "Rcs_typedef.h"
 #include "Rcs_macros.h"
 #include "Rcs_body.h"
-#include "Rcs_parser.h"
 #include "Rcs_utils.h"
 #include "Rcs_kinematics.h"
 #include "Rcs_Vec3d.h"
@@ -57,11 +56,11 @@ Rcs::TaskCOM3D::TaskCOM3D(const std::string& className,
                           int dim):
   Rcs::TaskGenericIK(className, node, _graph, dim)
 {
-  if (getDim() == 3)
+  if (getClassName()=="COG")
   {
-    getParameter(0)->setParameters(-2.5, 2.5, 1.0, "X Position [m]");
-    getParameter(1)->setParameters(-2.5, 2.5, 1.0, "Y Position [m]");
-    getParameter(2)->setParameters(-2.5, 2.5, 1.0, "Z Position [m]");
+    resetParameter(Parameters(-2.5, 2.5, 1.0, "X Position [m]"));
+    addParameter(Parameters(-2.5, 2.5, 1.0, "Y Position [m]"));
+    addParameter(Parameters(-2.5, 2.5, 1.0, "Z Position [m]"));
   }
 }
 
@@ -208,7 +207,7 @@ void Rcs::TaskCOM3D::computeH(MatNd* H) const
 }
 
 /*******************************************************************************
- * See header
+ * \todo: Check mass > 0
  ******************************************************************************/
 bool Rcs::TaskCOM3D::isValid(xmlNode* node, const RcsGraph* graph)
 {

@@ -41,10 +41,10 @@
 #include <float.h>
 
 
-#define HTR_TOSTRING_MAXSIZE (12 * 32)
+#define HTR_TOSTRING_MAXSIZE (12 * 16)
 
 
-static HTr Identity = { {0., 0., 0.} ,
+static HTr Identity = { {0., 0., 0.},
   { {1., 0., 0.}, {0., 1., 0.}, {0., 0., 1.} }
 };
 
@@ -100,6 +100,16 @@ void HTr_transpose(HTr* A_12, const HTr* A_21)
 /*******************************************************************************
  *
  ******************************************************************************/
+void HTr_transposeSelf(HTr* A_12)
+{
+  HTr tmp;
+  HTr_copy(&tmp, A_12);
+  HTr_transpose(A_12, &tmp);
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
 void HTr_setIdentity(HTr* self)
 {
   self->org[0] =  0.0;
@@ -107,6 +117,16 @@ void HTr_setIdentity(HTr* self)
   self->org[2] =  0.0;
 
   Mat3d_setIdentity(self->rot);
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void HTr_setRandom(HTr* self)
+{
+  Vec3d_setRandom(self->org, -1.0, 1.0);
+  Mat3d_setRandomRotation(self->rot);
+  RCHECK(Mat3d_isValid(self->rot));
 }
 
 /*******************************************************************************
@@ -216,6 +236,19 @@ void HTr_print(const HTr* A)
 }
 
 /*******************************************************************************
+ *
+ ******************************************************************************/
+void HTr_printComment(const char* text, const HTr* A)
+{
+  if (text != NULL)
+  {
+    fprintf(stdout, "%s\n", text);
+  }
+
+  HTr_fprint(stdout, A);
+}
+
+/*******************************************************************************
  * Transformation from body to world coordinates
  *
  * A_2I   = A_21 * A_1I
@@ -249,6 +282,16 @@ void HTr_invTransform(HTr* A_21, const HTr* A_1I, const HTr* A_2I)
 }
 
 /*******************************************************************************
+ * See HTr_invTransform()
+ ******************************************************************************/
+void HTr_invTransformSelf(HTr* A_21 /* in as A_2I */, const HTr* A_1I)
+{
+  HTr tmp;
+  HTr_copy(&tmp, A_21);
+  HTr_invTransform(A_21, A_1I, &tmp);
+}
+
+/*******************************************************************************
  *
  ******************************************************************************/
 const HTr* HTr_identity()
@@ -264,23 +307,45 @@ void HTr_toString(char* str, const HTr* A)
   RCHECK(str);
   RCHECK(A);
 
-  char buf[12][32];
-  const unsigned int maxDigits = 8;
+  /* char buf[12][16]; */
+  /* const unsigned int maxDigits = 8; */
 
-  snprintf(str, HTR_TOSTRING_MAXSIZE,
-           "%31s %31s %31s %31s %31s %31s %31s %31s %31s %31s %31s %31s",
-           String_fromDouble(buf[0], A->org[0], maxDigits),
-           String_fromDouble(buf[1], A->org[1], maxDigits),
-           String_fromDouble(buf[2], A->org[2], maxDigits),
-           String_fromDouble(buf[3], A->rot[0][0], maxDigits),
-           String_fromDouble(buf[4], A->rot[0][1], maxDigits),
-           String_fromDouble(buf[5], A->rot[0][2], maxDigits),
-           String_fromDouble(buf[6], A->rot[1][0], maxDigits),
-           String_fromDouble(buf[7], A->rot[1][1], maxDigits),
-           String_fromDouble(buf[8], A->rot[1][2], maxDigits),
-           String_fromDouble(buf[9], A->rot[2][0], maxDigits),
-           String_fromDouble(buf[10], A->rot[2][1], maxDigits),
-           String_fromDouble(buf[11], A->rot[2][2], maxDigits));
+  /* snprintf(str, HTR_TOSTRING_MAXSIZE, */
+  /*          "%s %s %s %s %s %s %s %s %s %s %s %s", */
+  /*          String_fromDouble(buf[0], A->org[0], maxDigits), */
+  /*          String_fromDouble(buf[1], A->org[1], maxDigits), */
+  /*          String_fromDouble(buf[2], A->org[2], maxDigits), */
+  /*          String_fromDouble(buf[3],  A->rot[0][0], maxDigits), */
+  /*          String_fromDouble(buf[4],  A->rot[0][1], maxDigits), */
+  /*          String_fromDouble(buf[5],  A->rot[0][2], maxDigits), */
+  /*          String_fromDouble(buf[6],  A->rot[1][0], maxDigits), */
+  /*          String_fromDouble(buf[7],  A->rot[1][1], maxDigits), */
+  /*          String_fromDouble(buf[8],  A->rot[1][2], maxDigits), */
+  /*          String_fromDouble(buf[9],  A->rot[2][0], maxDigits), */
+  /*          String_fromDouble(buf[10], A->rot[2][1], maxDigits), */
+  /*          String_fromDouble(buf[11], A->rot[2][2], maxDigits)); */
+
+
+
+  const unsigned int maxDigits = 12;
+  char buf[64];
+
+  strncpy(str, String_fromDouble(buf, A->org[0], maxDigits), 16);
+  strcat(str, " ");
+  strncat(str, String_fromDouble(buf, A->org[1], maxDigits), 16);
+  strcat(str, " ");
+  strncat(str, String_fromDouble(buf, A->org[2], maxDigits), 16);
+  strcat(str, " ");
+
+  for (int i=0; i<3; ++i)
+  {
+    for (int j=0; j<3; ++j)
+    {
+      strncat(str, String_fromDouble(buf, A->rot[i][j], maxDigits), 16);
+      strcat(str, " ");
+    }
+  }
+
 }
 
 /*******************************************************************************
@@ -338,7 +403,7 @@ void HTr_from2Points(HTr* A_KI, const double p1[3], const double p2[3])
   if ((fabs(Vec3d_diffAngle(ez,tmp))<1.0e-5) ||
       (fabs(Vec3d_diffAngle(ez,tmp)-M_PI)<1.0e-5))
   {
-    Vec3d_set(tmp, 1.0 , 0.0 , 0.0);
+    Vec3d_set(tmp, 1.0, 0.0, 0.0);
   }
 
   Vec3d_crossProduct(ey, ez, tmp);

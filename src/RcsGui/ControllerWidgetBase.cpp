@@ -45,9 +45,6 @@
 #include <QTimer>
 #include <QGridLayout>
 #include <QVBoxLayout>
-#include <QGroupBox>
-#include <QCheckBox>
-#include <QLabel>
 
 #include <algorithm>
 
@@ -61,9 +58,9 @@ typedef struct
 
 
 
-/*****************************************************************************
-  \brief Thread function.
-*****************************************************************************/
+/*******************************************************************************
+ * Thread function.
+ ******************************************************************************/
 void* ControllerWidgetBase::controllerGuiBase(void* arg)
 {
   VoidPointerList* p = (VoidPointerList*) arg;
@@ -89,9 +86,9 @@ void* ControllerWidgetBase::controllerGuiBase(void* arg)
   return widget;
 }
 
-/*****************************************************************************
-  \brief Static instantiation method.
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 int ControllerWidgetBase::create(ControllerBase* c,
                                  MatNd* a_des,
                                  MatNd* x_des,
@@ -117,9 +114,9 @@ int ControllerWidgetBase::create(ControllerBase* c,
   return handle;
 }
 
-/*****************************************************************************
-  \brief Static instantiation method.
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 int ControllerWidgetBase::create(ControllerBase* c,
                                  MatNd* a_des,
                                  MatNd* a_curr,
@@ -146,25 +143,18 @@ int ControllerWidgetBase::create(ControllerBase* c,
   return handle;
 }
 
-/*****************************************************************************
-  \brief Static destroy method.
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 bool ControllerWidgetBase::destroy(int handle)
 {
   return RcsGuiFactory_destroyGUI(handle);
 }
 
-/*****************************************************************************
-  \brief Default constructor
-*****************************************************************************/
-ControllerWidgetBase::ControllerWidgetBase(): QScrollArea()
-{
-}
-
-/*****************************************************************************
-  \brief Constructor
-*****************************************************************************/
-ControllerWidgetBase::ControllerWidgetBase(ControllerBase* cntrl,
+/*******************************************************************************
+ *
+ ******************************************************************************/
+ControllerWidgetBase::ControllerWidgetBase(const ControllerBase* cntrl,
                                            MatNd* a_des,
                                            MatNd* a_curr,
                                            MatNd* x_des,
@@ -209,11 +199,26 @@ ControllerWidgetBase::ControllerWidgetBase(ControllerBase* cntrl,
 
     if (tsk->getName() != "Unnamed task")
     {
-      TaskWidget* task_widget = new TaskWidget(tsk,
-                                               &a_des->ele[id],
-                                               &x_des->ele[rowIndex],
-                                               &x_curr->ele[rowIndex],
-                                               mutex_, showOnly);
+      TaskWidget* task_widget;
+
+      if (a_curr == NULL)
+      {
+        task_widget = new TaskWidget(tsk,
+                                     &a_des->ele[id],
+                                     &x_des->ele[rowIndex],
+                                     &x_curr->ele[rowIndex],
+                                     mutex_, showOnly);
+      }
+      else
+      {
+        task_widget = new TaskWidget(tsk,
+                                     &a_des->ele[id],
+                                     &x_des->ele[rowIndex],
+                                     &a_curr->ele[rowIndex],
+                                     &x_curr->ele[rowIndex],
+                                     mutex_, showOnly);
+      }
+
 
       max_label_width = std::max(task_widget->getMaxLabelWidth(), max_label_width);
       this->taskWidgets.push_back(task_widget);
@@ -222,9 +227,9 @@ ControllerWidgetBase::ControllerWidgetBase(ControllerBase* cntrl,
               task_widget, SLOT(setActive(int)));
       connect(timer, SIGNAL(timeout()), task_widget, SLOT(updateUnconstrainedControls()));
       connect(timer, SIGNAL(timeout()), task_widget, SLOT(displayAct()));
-      rowIndex += _controller->getTask(id)->getDim();
     }
 
+    rowIndex += _controller->getTask(id)->getDim();
   }
 
   // all lcd sliders have been added, let's adjust the label size
@@ -247,22 +252,28 @@ ControllerWidgetBase::ControllerWidgetBase(ControllerBase* cntrl,
 
   timer->start(100);
   setActive(showOnly ? Qt::Unchecked : Qt::Checked);
-  resize(650, 700);
+
+  const int width = 750;
+  const int maxHeight = 1000;
+  int height = widget()->sizeHint().height();
+  resize(width, height < maxHeight ? height : maxHeight);
+
   showActiveTasks(Qt::Unchecked);
+
   RLOG(5, "ControllerWidgetBase generated");
 }
 
-/*****************************************************************************
-  \brief Destructor
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 ControllerWidgetBase::~ControllerWidgetBase()
 {
   RLOG(5, "Destroying ControllerWidgetBase");
 }
 
-/*****************************************************************************
-  \brief .
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 QGroupBox* ControllerWidgetBase::boxKinematicsInfo()
 {
   // Elements are aligned horizontally
@@ -281,9 +292,9 @@ QGroupBox* ControllerWidgetBase::boxKinematicsInfo()
   return gbox;
 }
 
-/*****************************************************************************
-  \brief .
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 QGroupBox* ControllerWidgetBase::boxControllerButtons()
 {
   // Elements are aligned horizontally
@@ -313,9 +324,9 @@ QGroupBox* ControllerWidgetBase::boxControllerButtons()
   return gbox_controllerButtons;
 }
 
-/*****************************************************************************
-  \brief Displays task target and current values.
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 void ControllerWidgetBase::displayAct()
 {
   char a[256];
@@ -330,9 +341,9 @@ void ControllerWidgetBase::displayAct()
   this->label_stats->setText(a);
 }
 
-/*****************************************************************************
-  \brief
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 void ControllerWidgetBase::setActive(int checkBoxState)
 {
 
@@ -352,9 +363,9 @@ void ControllerWidgetBase::setActive(int checkBoxState)
 
 }
 
-/*****************************************************************************
-  \brief Shows all task widgets of tasks with activation > 0.
-*****************************************************************************/
+/*******************************************************************************
+ * Shows all task widgets of tasks with activation > 0.
+ ******************************************************************************/
 void ControllerWidgetBase::showActiveTasks(int checkBoxState)
 {
   std::vector<TaskWidget*>::iterator it;
@@ -375,9 +386,9 @@ void ControllerWidgetBase::showActiveTasks(int checkBoxState)
   }
 }
 
-/*****************************************************************************
-  \brief Locks the mutex, if present.
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 void ControllerWidgetBase::lock()
 {
   if (this->mutex != NULL)
@@ -386,9 +397,9 @@ void ControllerWidgetBase::lock()
   }
 }
 
-/*****************************************************************************
-  \brief Unlocks the mutex, if present.
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 void ControllerWidgetBase::unlock()
 {
   if (this->mutex != NULL)
@@ -397,9 +408,9 @@ void ControllerWidgetBase::unlock()
   }
 }
 
-/*****************************************************************************
-
-*****************************************************************************/
+/*******************************************************************************
+ *
+ ******************************************************************************/
 void ControllerWidgetBase::registerCallback(TaskWidget::TaskChangeCallback* callback)
 {
   for (size_t i=0; i<taskWidgets.size(); ++i)
@@ -423,7 +434,15 @@ void ControllerWidgetBase::reset(const MatNd* a, const MatNd* x)
 
 }
 
-
+/*******************************************************************************
+ * This overrides the behavior that the scroll area scrolls whenever the
+ * mouse wheel is used inside it. This is a bit disturbing, since the sliders
+ * inside the scroll area then cannot be scrolled accurately using the mouse
+ * wheel. For some reason, this issue only exists on Windows.
+ ******************************************************************************/
+void ControllerWidgetBase::wheelEvent(QWheelEvent* e)
+{
+}
 
 
 }   // namespace Rcs

@@ -381,7 +381,7 @@ RcsBody* RcsGraph_getBodyByTruncatedName(const RcsGraph* self,
  *  \param[in] idx    Index of the body to be retrieved.
  *  \return Pointer to the body within the graph, or NULL if idx is too large.
  */
-RcsBody* RcsGraph_getBodyByIndex(const RcsGraph* graph, unsigned int idx);
+RcsBody* RcsGraph_getBodyByIndex(const RcsGraph* self, unsigned int idx);
 
 /*! \ingroup RcsGraphFunctions
  *  \brief Returns the summed mass of all bodies of the graph.
@@ -583,6 +583,18 @@ bool RcsGraph_addBody(RcsGraph* graph, RcsBody* parent, RcsBody* body,
 */
 void RcsGraph_addRandomGeometry(RcsGraph* self);
 
+/*! \ingroup RcsGraphFunctions
+ *  \brief This function computes the axis-aligned bounding box of a shape.
+ *
+ *  \param[in] self       Graph. If it is NULL, or contains no bodies, the
+ *                        AABB is set to zero, and a debug message is issued
+ *                        on debul level 4.
+ *  \param[in] xyzMin     Minimum point of the box
+ *  \param[in] xyzMax     Maximum point of the box
+ */
+void RcsGraph_computeAABB(const RcsGraph* self,
+                          double xyzMin[3], double xyzMax[3]);
+
 
 /**
  * @name Joints
@@ -601,8 +613,18 @@ bool RcsGraph_limitJoints(const RcsGraph* self, MatNd* q, RcsStateType type);
 
 /*! \ingroup RcsGraphFunctions
  *  \brief Returns the number of joints whose limits are violated.
+ *
+ *  \param[in] self   Pointer to graph, must not be NULL.
+ *  \param[in] angularMargin  Distance to joint limit that is considered a
+ *                            violation, for angular joints.
+ *  \param[in] linearMargin   Distance to joint limit that is considered a
+ *                            violation, for translational joints.
+ *  \param[in] verbose        If true, console information on violations will
+ *                            be printed to stderr.
  */
 unsigned int RcsGraph_numJointLimitsViolated(const RcsGraph* self,
+                                             double angularMargin,
+                                             double linearMargin,
                                              bool verbose);
 
 /*! \ingroup RcsGraphFunctions

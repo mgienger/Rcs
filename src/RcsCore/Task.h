@@ -144,7 +144,7 @@ public:
                        const double scaleFactor, const std::string& name);
     double minVal;
     double maxVal;
-    double scale_factor;
+    double scaleFactor;
     std::string name;
   };
 
@@ -174,12 +174,6 @@ public:
    */
   virtual unsigned int getDim() const;
 
-  /*! \brief Sets the dimension of the task. This should not be required in
-   *         most cases. However, in few exceptions (e.g. CompositeTask), it
-   *         is needed.
-   */
-  virtual void setDim(unsigned int taskDim);
-
   /*! \brief Sets the name of the task.
    */
   void setName(const std::string& name);
@@ -192,15 +186,31 @@ public:
    *         index is out of the range of the parameter vector, the function
    *         exits with a fatal error.
    */
-  Parameters* getParameter(size_t index) const;
+  Parameters& getParameter(size_t index);
+
+  /*! \brief Same as above, but non-modifyable pointer.
+   */
+  const Parameters& getParameter(size_t index) const;
 
   /*! \brief Returns the whole parameter list
    */
-  const std::vector<Parameters*>& getParameters() const;
+  const std::vector<Parameters>& getParameters() const;
 
   /*! \brief Returns the whole parameter list
    */
-  std::vector<Parameters*>& getParameters();
+  std::vector<Parameters>& getParameters();
+
+  /*! \brief Clears the vector of parameters so that none are contained.
+   */
+  void clearParameters();
+
+  /*! \brief Adds a parameter instance to the vector of parameters.
+   */
+  void addParameter(const Parameters& newParam);
+
+  /*! \brief Clears all parameters and adds this one.
+   */
+  void resetParameter(const Parameters& newParam);
 
   /*! \brief Returns a copy of the string that holds the task's class
    *         name. The class name is the name to be used in the xml file's
@@ -640,13 +650,6 @@ public:
   static bool checkBody(xmlNode* node, const char* tag,
                         const RcsGraph* graph, const char* taskName);
 
-  /*! \brief Returns true if the task is specified correctly, false
-   *         otherwise. The task is invalid if
-   *         - The effector body given in the xmlNode does not exist in the
-   *           given graph
-   */
-  static bool isValid(xmlNode* node, const RcsGraph* graph);
-
   ///@}
 
   /**
@@ -712,7 +715,15 @@ public:
 
 protected:
 
-  /*! \brief Graph on which the task operates
+  /*! \brief Sets the dimension of the task. This should not be required in
+   *         most cases. However, in few exceptions (e.g. CompositeTask), it
+   *         is needed.
+   */
+  virtual void setDim(unsigned int taskDim);
+
+  /*! \brief Graph on which the task operates. It is not a const pointer,
+   *         since it is modified in some test functions. However, it is safe
+   *         to assume that it is not modified during "normal" processing.
    */
   RcsGraph* graph;          //!< Underlying graph representation
   const RcsBody* ef;        //!< Effector
@@ -740,7 +751,7 @@ private:
 
   /*! \brief List of constant task parameters for each dimension
    */
-  std::vector<Parameters*> params;
+  std::vector<Parameters> params;
 };
 
 }

@@ -35,6 +35,20 @@
 *******************************************************************************/
 
 #include <RcsViewer.h>
+#include <COSNode.h>
+#include <ArrowNode.h>
+#include <VertexArrayNode.h>
+#include <GraphNode.h>
+#include <KeyCatcher.h>
+#include <Rcs_utils.h>
+#include <MeshNode.h>
+#include <TextNode3D.h>
+#include <Rcs_graphicsUtils.h>
+#include <DepthRenderer.h>
+
+#include <MatNdWidget.h>
+#include <Rcs_guiFactory.h>
+
 #include <Rcs_cmdLine.h>
 #include <Rcs_macros.h>
 #include <Rcs_timer.h>
@@ -43,14 +57,6 @@
 #include <Rcs_mesh.h>
 #include <Rcs_parser.h>
 #include <Rcs_typedef.h>
-
-#include <COSNode.h>
-#include <ArrowNode.h>
-#include <VertexArrayNode.h>
-#include <GraphNode.h>
-#include <KeyCatcher.h>
-#include <Rcs_utils.h>
-#include <MeshNode.h>
 
 #include <osgGA/TrackballManipulator>
 #include <osgDB/Registry>
@@ -340,15 +346,18 @@ static bool test_cylinderMesh()
  *****************************************************************************/
 static bool test_cylinderHullMesh()
 {
-  double radius = 0.5;
+  double radiusBottom = 0.5;
+  double radiusTop = 0.25;
   double height = 1.0;
   unsigned int radialSegments = 16;
   unsigned int heightSegments = 4;
   double angleAround = 360.0;
 
   Rcs::CmdLineParser argP;
-  argP.getArgument("-r", &radius, "Radius (default is %f)", radius);
-  argP.getArgument("-h", &height, "Height (default is %f)", height);
+  argP.getArgument("-r1", &radiusBottom, "Radius bottom (default is %f)",
+                   radiusBottom);
+  argP.getArgument("-r2", &radiusTop, "Radius top (default is %f)", radiusTop);
+  argP.getArgument("-height", &height, "Height (default is %f)", height);
   argP.getArgument("-angleAround", &angleAround, "Angle around [deg](default "
                    "is %f)", angleAround);
   argP.getArgument("-radialSegments", &radialSegments, "Radial segments "
@@ -363,9 +372,25 @@ static bool test_cylinderHullMesh()
 
   angleAround *= M_PI/180.0;
 
-  RcsMeshData* mesh = RcsMesh_createCylinderHull(radius, 0.5*radius, height,
-                                                 radialSegments, heightSegments,
-                                                 angleAround);
+  RcsMeshData* mesh = RcsMesh_createCylinderHull(radiusBottom, radiusTop,
+                                                 height, radialSegments,
+                                                 heightSegments, angleAround);
+  RMSGS("Mesh has %d vertices and %d facecs", mesh->nVertices, mesh->nFaces);
+  int nDuplicates = RcsMesh_compressVertices(mesh, 1.0e-8);
+  RLOG(0, "Reduced mesh by %d duplicates", nDuplicates);
+  RMSGS("Reduced mesh has %d vertices and %d facecs",
+        mesh->nVertices, mesh->nFaces);
+  RcsMesh_toFile(mesh, "reducedMesh.stl");
+
+  RcsMeshData* delauny = RcsMesh_fromVertices(mesh->vertices, mesh->nVertices);
+
+  if (delauny)
+  {
+    nDuplicates = RcsMesh_compressVertices(delauny, 1.0e-8);
+    RLOG(0, "Delaunay mesh has now less %d duplicates", nDuplicates);
+    RcsMesh_toFile(delauny, "CylinderHullDelaunay.stl");
+    RcsMesh_destroy(delauny);
+  }
 
   showMesh(mesh);
   RcsMesh_destroy(mesh);
@@ -389,7 +414,6 @@ static bool test_meshify()
   argP.getArgument("-computeType", &computeType, "Compute type: 1 distance, "
                    "2 physics, 4 graphics, default is %d", computeType);
 
-  Rcs_addResourcePath("config");
   Rcs_addResourcePath(directory);
   RcsGraph* graph = RcsGraph_create(xmlFileName);
   RcsMeshData* allMesh = RcsGraph_meshify(graph, scale, computeType);
@@ -420,9 +444,7 @@ static void testOsgViewer()
   osgDB::Registry::instance()->setOptions(options);
 
   osgViewer::Viewer* viewer = new osgViewer::Viewer();
-
-  osg::ref_ptr<osgGA::TrackballManipulator> trackball = new osgGA::TrackballManipulator();
-  viewer->setCameraManipulator(trackball.get());
+  viewer->setCameraManipulator(new osgGA::TrackballManipulator());
 
   osg::ref_ptr<osg::Group> rootnode;
 
@@ -631,34 +653,57 @@ static void testMeshNode()
   char meshFile[256] = "";
   Rcs::CmdLineParser argP;
   argP.getArgument("-f", meshFile, "Mesh file (default is %s)", meshFile);
+  bool withScaling = argP.hasArgument("-scaling", "Slider for dynamic scaling");
 
   if (argP.hasArgument("-h"))
   {
     return;
   }
 
-  Rcs::MeshNode* mn = NULL;
+  osg::ref_ptr<Rcs::MeshNode> mn;
+  RcsMeshData* mesh = NULL;
 
   if (strlen(meshFile)>0)
   {
+    RMSG("Loading mesh file \"%s\"", meshFile);
     mn = new Rcs::MeshNode(meshFile);
   }
   else
   {
-    RcsMeshData* mesh = RcsMesh_createTorus(0.5, 0.25, 32, 32);
+    mesh = RcsMesh_createTorus(0.5, 0.25, 32, 32);
     mn = new Rcs::MeshNode(mesh->vertices, mesh->nVertices,
                            mesh->faces, mesh->nFaces);
-    RcsMesh_destroy(mesh);
   }
 
 
   Rcs::Viewer* viewer = new Rcs::Viewer();
-  viewer->add(mn);
+  viewer->add(mn.get());
   viewer->add(new Rcs::COSNode());
-  viewer->runInThread();
 
-  RPAUSE();
+  double scale = 1.0;
+  MatNd scaleArr = MatNd_fromPtr(1, 1, &scale);
 
+  if (withScaling)
+  {
+    Rcs::MatNdWidget::create(&scaleArr, -2.0, 2.0, "Scale");
+  }
+
+  while (runLoop)
+  {
+    if (withScaling)
+    {
+      RcsMeshData* cpyOfMesh = RcsMesh_clone(mesh);
+      RcsMesh_scale(cpyOfMesh, scale);
+      mn->setMesh(cpyOfMesh->vertices, cpyOfMesh->nVertices,
+                  cpyOfMesh->faces, cpyOfMesh->nFaces);
+      RcsMesh_destroy(cpyOfMesh);
+    }
+
+    viewer->frame();
+    Timer_usleep(1000);
+  }
+
+  RcsMesh_destroy(mesh);
   delete viewer;
 }
 
@@ -687,17 +732,16 @@ static void testCameraTransform()
   pthread_mutex_t mtx;
   pthread_mutex_init(&mtx, NULL);
 
-  Rcs_addResourcePath("config");
   Rcs_addResourcePath(directory);
 
   RcsGraph* graph = RcsGraph_create(xmlFileName);
   Rcs::Viewer* viewer = new Rcs::Viewer();
-  Rcs::KeyCatcher* kc = new Rcs::KeyCatcher();
-  Rcs::COSNode* cn = new Rcs::COSNode();
+  osg::ref_ptr<Rcs::KeyCatcher> kc = new Rcs::KeyCatcher();
+  osg::ref_ptr<Rcs::COSNode> cn = new Rcs::COSNode();
 
   viewer->add(new Rcs::GraphNode(graph));
-  viewer->add(cn);
-  viewer->add(kc);
+  viewer->add(cn.get());
+  viewer->add(kc.get());
   viewer->runInThread(&mtx);
 
   HTr A_CI;   // World to camera transform
@@ -837,6 +881,126 @@ static void testArrowNode()
 }
 
 /*******************************************************************************
+ * Test for 3d text
+ ******************************************************************************/
+static void testText3D()
+{
+  double org[3], dir[3], radius = 0.1, length = 1.0;
+  Vec3d_setZero(org);
+  Vec3d_setUnitVector(dir, 2);
+
+
+  Rcs::CmdLineParser argP;
+  argP.getArgument("-x", &org[0], "X-position of arrow origin");
+  argP.getArgument("-y", &org[1], "Y-position of arrow origin");
+  argP.getArgument("-z", &org[2], "Z-position of arrow origin");
+  argP.getArgument("-r", &radius, "Radius of arrow");
+  argP.getArgument("-l", &length, "Length of arrow");
+
+  osg::ref_ptr<Rcs::TextNode3D> textNd = new Rcs::TextNode3D("My text");
+  textNd->setMaterial("RED");
+
+
+  Rcs::Viewer* viewer = new Rcs::Viewer();
+  viewer->add(new Rcs::COSNode());
+  viewer->add(textNd.get());
+  viewer->runInThread();
+
+  RPAUSE();
+
+  delete viewer;
+}
+
+/*******************************************************************************
+ * FindChildrenOfType
+ ******************************************************************************/
+bool testFindChildrenOfType()
+{
+  Rcs::CmdLineParser argP;
+  char xmlFileName[256] = "gScenario.xml";
+  char directory[256] = "config/xml/DexBot";
+  argP.getArgument("-f", xmlFileName, "Configuration file name (default"
+                   " is \"%s\")", xmlFileName);
+  argP.getArgument("-dir", directory, "Configuration file directory "
+                   "(default is \"%s\")", directory);
+  Rcs_addResourcePath(directory);
+  Rcs_addResourcePath("config");
+
+  RcsGraph* graph = RcsGraph_create(xmlFileName);
+
+  if (graph == NULL)
+  {
+    RMSG("Failed to create graph from file \"%s\" - exiting",
+         xmlFileName);
+    return false;
+  }
+
+  osg::ref_ptr<Rcs::GraphNode> gn = new Rcs::GraphNode(graph);
+  std::vector<Rcs::BodyNode*> bodyNodes;
+  bodyNodes = Rcs::findChildrenOfType<Rcs::BodyNode>(gn.get());
+
+  for (size_t i=0; i<bodyNodes.size(); ++i)
+  {
+    RLOG_CPP(0, "BodyNode[" << i << "] = " << bodyNodes[i]->getName());
+  }
+
+  return true;
+}
+
+/*******************************************************************************
+ * Depth rendering test
+ ******************************************************************************/
+void testDepthRenderer()
+{
+  char xmlFileName[128] = "gDepth.xml";
+  char directory[128] = "config/xml/Examples";
+  unsigned int width = 32, height = 24;
+
+  Rcs::CmdLineParser argP;
+  argP.getArgument("-f", xmlFileName, "Configuration file name "
+                   "(default is %s)", xmlFileName);
+  argP.getArgument("-dir", directory, "Configuration file directory "
+                   "(default is %s)", directory);
+  argP.getArgument("-width", &width, "Image width (default is %d)", width);
+  argP.getArgument("-height", &height, "Image height (default is %d)", height);
+  Rcs_addResourcePath(directory);
+
+  if (argP.hasArgument("-h"))
+  {
+    return;
+  }
+
+  RcsGraph* graph = RcsGraph_create(xmlFileName);
+  osg::ref_ptr<Rcs::GraphNode> gn = new Rcs::GraphNode(graph);
+  Rcs::Viewer* viewer = new Rcs::Viewer();
+  viewer->setCameraTransform(HTr_identity());
+  viewer->add(gn.get());
+
+  osg::ref_ptr<Rcs::DepthRenderer> zRenderer;
+  zRenderer = new Rcs::DepthRenderer(width, height);
+  zRenderer->setCameraTransform(HTr_identity());
+  zRenderer->addNode(gn.get());
+
+  Rcs::MatNdWidget::create(graph->q, -10.0, 10.0, "q");
+
+  while (runLoop)
+  {
+    RcsGraph_setState(graph, NULL, NULL);
+    viewer->frame();
+    HTr camTrf;
+    viewer->getCameraTransform(&camTrf);
+    zRenderer->setCameraTransform(&camTrf);
+    zRenderer->frame();
+
+    Timer_waitDT(0.1);
+  }
+
+  delete viewer;
+  RcsGuiFactory_shutdown();
+  RcsGraph_destroy(graph);
+}
+
+/*******************************************************************************
  * Select test modes
  ******************************************************************************/
 int main(int argc, char** argv)
@@ -850,6 +1014,8 @@ int main(int argc, char** argv)
   Rcs::CmdLineParser argP(argc, argv);
   argP.getArgument("-dl", &RcsLogLevel, "Debug level (default is 0)");
   argP.getArgument("-m", &mode, "Test mode");
+
+  Rcs_addResourcePath("config");
 
   switch (mode)
   {
@@ -871,6 +1037,9 @@ int main(int argc, char** argv)
       printf("\t\t11   Test torus mesh\n");
       printf("\t\t12   Test cone mesh\n");
       printf("\t\t13   Test sphere swept rectangle mesh\n");
+      printf("\t\t14   Test 3d text\n");
+      printf("\t\t15   Test findChildrenOfType() function\n");
+      printf("\t\t16   Test depth rendering\n");
       break;
 
     case 0:
@@ -949,6 +1118,24 @@ int main(int argc, char** argv)
     case 13:
     {
       test_ssrMesh();
+      break;
+    }
+
+    case 14:
+    {
+      testText3D();
+      break;
+    }
+
+    case 15:
+    {
+      testFindChildrenOfType();
+      break;
+    }
+
+    case 16:
+    {
+      testDepthRenderer();
       break;
     }
 

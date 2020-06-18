@@ -963,7 +963,7 @@ MatNd* MatNd_createFromFile(const char* fileName)
 
   if (fd == NULL)
   {
-    RLOG(1, "Error opening file \"%s\"", fileName);
+    RLOG(1, "Can't open file \"%s\" - returning NULL", fileName);
     return NULL ;
   }
 
@@ -3082,15 +3082,8 @@ void MatNd_rotateSelf(MatNd* self, double A_KI[3][3])
 
 void MatNd_invRotateSelf(MatNd* self, double A_KI[3][3])
 {
-  int i, j;
   double A_IK[3][3];
-
-  for (i = 0; i < 3; i++)
-    for (j = 0; j < 3; j++)
-    {
-      A_IK[i][j] = A_KI[j][i];
-    }
-
+  Mat3d_transpose(A_IK, A_KI);
   MatNd_rotateSelf(self, A_IK);
 }
 
@@ -4456,7 +4449,7 @@ void MatNd_PinvHessian2(MatNd* dqJpinv, const MatNd* J, const MatNd* dqJ,
 
 *******************************************************************************/
 
-bool MatNd_lineFit2D(double* A, double* B, const MatNd* data)
+static bool MatNd_lineFit2D_(double* A, double* B, const MatNd* data)
 {
   unsigned int i;
   double x = 0.0, xx = 0.0, y = 0.0, xy = 0.0, xi, yi, det, invMat[2][2];
@@ -4465,8 +4458,7 @@ bool MatNd_lineFit2D(double* A, double* B, const MatNd* data)
   if (data->m < 2)
   {
     RLOG(4, "Can't perform line fit for less than 2 points! "
-         "You gave me only %d",
-         data->m);
+         "You gave me only %d", data->m);
     return false;
   }
 
@@ -4474,8 +4466,8 @@ bool MatNd_lineFit2D(double* A, double* B, const MatNd* data)
 
   for (i = 0; i < data->m; i++) // number of samples
   {
-    xi = MatNd_get(data, i, 0);
-    yi = MatNd_get(data, i, 1);
+    xi = MatNd_get2(data, i, 0);
+    yi = MatNd_get2(data, i, 1);
 
     x += xi;
     xx += xi * xi;
@@ -4493,14 +4485,60 @@ bool MatNd_lineFit2D(double* A, double* B, const MatNd* data)
 
   if (det == 0.0)
   {
-    RLOG(4, "Line fit failed!");
+    RLOG(4, "Line fit failed - can't invert covariance matrix!");
     return false;
   }
 
-  *A = invMat[0][0] * xy + invMat[0][1] * y;
-  *B = invMat[1][0] * xy + invMat[1][1] * y;
+  const double paramA = invMat[0][0] * xy + invMat[0][1] * y;
+  const double paramB = invMat[1][0] * xy + invMat[1][1] * y;
+
+  *A = paramA;
+  *B = paramB;
 
   return true;
+}
+
+bool MatNd_lineFit2D(double* A, double* B, const MatNd* data)
+{
+  MatNd* dataTp = MatNd_clone(data);
+  MatNd_transposeSelf(dataTp);
+
+  const double xMin = VecNd_minEle(&dataTp->ele[0], dataTp->n);
+  const double xMax = VecNd_maxEle(&dataTp->ele[0], dataTp->n);
+  const double yMin = VecNd_minEle(&dataTp->ele[dataTp->n], dataTp->n);
+  const double yMax = VecNd_maxEle(&dataTp->ele[dataTp->n], dataTp->n);
+
+  const double xRange = xMax - xMin;
+  const double yRange = yMax - yMin;
+
+  if (xRange >= yRange)
+  {
+    MatNd_destroy(dataTp);
+    return MatNd_lineFit2D_(A, B, data);
+  }
+
+  // x = Ay +B => y = (x - B) / A = (1/A)*x -B/A
+  for (unsigned int i=0; i<dataTp->n; ++i)
+  {
+    MatNd_swapElements(dataTp, 0, i, 1, i);
+  }
+  MatNd_transposeSelf(dataTp);
+
+  double A2, B2;
+  bool success = MatNd_lineFit2D_(&A2, &B2, dataTp);
+
+  if (A2==0.0)
+  {
+    RLOG(1, "Found vertical data points - setting line inclination to 1.0e8");
+    A2 = 1.0e-8;
+  }
+
+  *A = 1.0/A2;
+  *B = -B2/A2;
+
+  MatNd_destroy(dataTp);
+
+  return success;
 }
 
 /*******************************************************************************
@@ -4961,11 +4999,10 @@ void MatNd_interpolateRowsEuler(MatNd* dst, const MatNd* src)
 
 void MatNd_reverseSelf(MatNd* mat)
 {
-  RCHECK(mat);
   MatNd* row = NULL;
   MatNd_create2(row, 1, mat->n);
 
-  for (unsigned int i = 0; i < mat->m / 2; i++)
+  for (unsigned int i = 0; i < mat->m / 2; ++i)
   {
     MatNd_getRow(row, i, mat);
     MatNd_setRow(mat, i, MatNd_getRowPtr(mat, mat->m - i - 1), mat->n);
@@ -5459,11 +5496,12 @@ double MatNd_interpolateArcLength(MatNd* res, const MatNd* s_, const MatNd* x,
 
   if (s1 - s0 > 0.0)
   {
-    double* dx = RNSTALLOC(cols, double);
+    double* dx = RNALLOC(cols, double);
     VecNd_sub(dx, x1, x0, cols);
     double ratio = (s_des - s0) / (s1 - s0);
     VecNd_constMulAndAddSelf(res->ele, dx, ratio, cols);
     t_s += ratio;
+    RFREE(dx);
   }
 
   // Clean up
@@ -5584,8 +5622,9 @@ double MatNd_inverseDiag(MatNd* dst, const MatNd* src)
   {
     for (i = 0; i < src->m; i++)
     {
-      dst->ele[i] = src->ele[i] == 0.0 ? DBL_MAX : 1.0/src->ele[i];
-      det *= src->ele[i];
+      const double src_i = src->ele[i];
+      dst->ele[i] = (src_i == 0.0) ? DBL_MAX : 1.0/src_i;
+      det *= src_i;
     }
   }
   else
@@ -5594,8 +5633,9 @@ double MatNd_inverseDiag(MatNd* dst, const MatNd* src)
     {
       if (i % (src->m + 1) == 0)
       {
-        dst->ele[i] = src->ele[i] == 0.0 ? DBL_MAX : 1.0/src->ele[i];
-        det *= src->ele[i];
+        const double src_i = src->ele[i];
+        dst->ele[i] = (src_i == 0.0) ? DBL_MAX : 1.0/src_i;
+        det *= src_i;
       }
       else
       {

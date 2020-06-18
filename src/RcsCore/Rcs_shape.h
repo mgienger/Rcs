@@ -74,6 +74,20 @@ bool RcsShape_setDistanceFunction(unsigned int shapeTypeIdx1,
                                   RcsDistanceFunction func);
 
 /*! \ingroup RcsShapeFunctions
+ *  \brief Returns a function poiter of the distance function that computes
+ *         the shape distance with the corresponding indices.
+ *
+ *  \param[in] shapeTypeIdx1   First shape's index (see RCSSHAPE_TYPE)
+ *  \param[in] shapeTypeIdx2   Second shape's index (see RCSSHAPE_TYPE)
+ *  \return Function pointer to distance function or NULL if it doesn't exist.
+ *          The function also returns NULL if either index is equal or larger
+ *          than RCSSHAPE_SHAPE_MAX. In this case, a warning is issued on
+ *          debug level 4.
+ */
+RcsDistanceFunction RcsShape_getDistanceFunction(unsigned int shapeTypeIdx1,
+                                                 unsigned int shapeTypeIdx2);
+
+/*! \ingroup RcsShapeFunctions
  *  \brief Returns the distance of s1 and s2. The closest points (in world
  *         coordinates) will be copied to I_cp1 and I_cp2. The unit normal
  *         vector (in world coordinates) of s1 (pointing away from the
@@ -89,7 +103,10 @@ double RcsShape_distance(const RcsShape* s1, const RcsShape* s2,
  *  \brief Computes the distance between a shape and a 3d point.
  *
  *  \param[in]  shape        RcsShape to which distance is to be computed
- *  \param[in]  A_SI         Transformation from world (I) to shape frame
+ *  \param[in]  A_SI         Transformation from world (I) to the shape's base
+ *                           frame. The shape frame might have an additional
+ *                           relative transform that is represented in
+ *                           RcsShape::A_CB.
  *  \param[in]  I_pt         Point in world coordinates
  *  \param[out] I_cpShape    Closest point on the shape in world coordinates
  *  \param[out] I_nShapePt   Unit normal vector from shape towards point
@@ -216,7 +233,7 @@ void* RcsShape_addOctree(RcsShape* self, const char* fileName);
 /*! \ingroup RcsShapeFunctions
  *  \brief This function computes the axis-aligned bounding box of a shape.
  *
- *  \param[in] shape      Shape data. If it is NULL, the AABB is set to zero,
+ *  \param[in] self       Shape data. If it is NULL, the AABB is set to zero,
  * *                      size, and a debug message is issued on debul level 4.
  *  \param[in] xyzMin     Minimum point of the box
  *  \param[in] xyzMax     Maximum point of the box

@@ -51,7 +51,8 @@
 
 ******************************************************************************/
 
-Rcs::COSNode::COSNode(float scale, float lengthX, float lengthY, float lengthZ) :
+Rcs::COSNode::COSNode(float scale, float lengthX, float lengthY,
+                      float lengthZ) :
   NodeBase(), angMode(None)
 {
   init(scale, lengthX, lengthY, lengthZ);
@@ -64,13 +65,13 @@ Rcs::COSNode::COSNode(float scale, float lengthX, float lengthY, float lengthZ) 
 
 ******************************************************************************/
 
-Rcs::COSNode::COSNode(const double* pos, float scale, float lengthX, float lengthY,
+Rcs::COSNode::COSNode(const double* pos, float scale, float lengthX,
+                      float lengthY,
                       float lengthZ) :
   NodeBase(), angMode(None)
 {
   setPosPtr(pos);
   init(scale, lengthX, lengthY, lengthZ);
-  // isDynamic = true;
   makeDynamic();
 }
 
@@ -89,7 +90,23 @@ Rcs::COSNode::COSNode(const double* pos, const double* rot, float scale,
   setPosPtr(pos);
   setRotMatPtr(rot);
   init(scale, lengthX, lengthY, lengthZ);
-  // isDynamic = true;
+  makeDynamic();
+}
+
+
+/******************************************************************************
+
+  \brief Constructor.
+
+******************************************************************************/
+
+Rcs::COSNode::COSNode(const HTr* A_CI, float scale, float lengthX,
+                      float lengthY, float lengthZ) :
+  NodeBase(), angMode(RotMat)
+{
+  setPosPtr(A_CI->org);
+  setRotMatPtr((double*)A_CI->rot);
+  init(scale, lengthX, lengthY, lengthZ);
   makeDynamic();
 }
 
@@ -100,8 +117,11 @@ Rcs::COSNode::COSNode(const double* pos, const double* rot, float scale,
 
 ******************************************************************************/
 
-void Rcs::COSNode::init(float scale, float lengthX, float lengthY, float lengthZ)
+void Rcs::COSNode::init(float scale, float lengthX, float lengthY,
+                        float lengthZ)
 {
+  setName("COSNode");
+
   float radius = 0.015f;
   float coneHeight = 0.1f;
   HTr A_KI;
@@ -177,6 +197,13 @@ void Rcs::COSNode::init(float scale, float lengthX, float lengthY, float lengthZ
 
   // Apply scaling factor
   this->patPtr()->setScale(osg::Vec3(scale, scale, scale));
+
+  // Make node ignore material changes to avoid weird colouring when forced
+  // parent's material.
+  osg::ref_ptr<osg::StateSet> stateset = getOrCreateStateSet();
+  stateset->setMode(GL_LIGHTING,
+                    osg::StateAttribute::PROTECTED |
+                    osg::StateAttribute::OFF);
 }
 
 

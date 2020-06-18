@@ -288,6 +288,9 @@ char* String_fromDouble(char* str, double value, unsigned int maxDigits)
   return String_fromDouble_old(str, value, maxDigits);
 #endif
 
+  // We can't use this, since the radix character (.) depends on the locale.
+  //return gcvt(value, maxDigits, str);
+
   int decpt, sign;
 
 #if defined (_MSC_VER)
@@ -396,10 +399,11 @@ static char* String_expandMacros_(char* str)
         if ((*q)=='}')
         {
           int macroLen = macroEndIdx-macroStartIdx;
-          char* macro = RNSTALLOC(macroLen+1, char);
+          char* macro = RNALLOC(macroLen+1, char);
           memcpy(macro, &str[macroStartIdx], macroLen);
           macro[macroLen] = '\0';
           char* envStr = getenv(macro);
+          RFREE(macro);
           unsigned int macroStrLen = envStr ? strlen(envStr) : 0;
           char* before = String_clone(str);
           before[macroStartIdx-2] = '\0';
@@ -855,7 +859,7 @@ static bool Rcs_testGradient2(void (*f)(double*, const double*, void*),
 
     if (verbose==true)
     {
-      REXEC(1)
+      REXEC(2)
       {
         fprintf(stderr, "max diff = %g\n analytic \t numeric\n", md);
 

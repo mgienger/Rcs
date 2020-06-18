@@ -968,6 +968,8 @@ bool RcsGraph_limitJoints(const RcsGraph* self, MatNd* q, RcsStateType type)
  * See header.
  ******************************************************************************/
 unsigned int RcsGraph_numJointLimitsViolated(const RcsGraph* self,
+                                             double angularMargin,
+                                             double linearMargin,
                                              bool verbose)
 {
   unsigned int violations = 0;
@@ -981,13 +983,14 @@ unsigned int RcsGraph_numJointLimitsViolated(const RcsGraph* self,
     }
 
     double qi = MatNd_get2(self->q, JNT->jointIndex, 0);
+    double margin = RcsJoint_isRotation(JNT) ? angularMargin : linearMargin;
 
-    if ((qi < JNT->q_min) || (qi > JNT->q_max))
+    if ((qi < JNT->q_min+margin) || (qi > JNT->q_max-margin))
     {
       if (verbose)
       {
-        RMSG("Joint limit of \"%s\" violated: %f [%f %f]",
-             JNT->name, qi, JNT->q_min, JNT->q_max);
+        RMSG("Joint limit of \"%s\" violated: %f [%f %f] margin: %f",
+             JNT->name, qi, JNT->q_min, JNT->q_max, margin);
       }
       violations++;
     }
@@ -1394,7 +1397,7 @@ void RcsGraph_fprintModelState(FILE* out, const RcsGraph* self, const MatNd* q)
   }
 
 
-  fprintf(out, "<model_state model=\"\" time_stamp=\"\">\n");
+  fprintf(out, "<model_state model=\"DefaultPose\" time_stamp=\"\">\n");
 
 
 
@@ -1649,7 +1652,7 @@ double RcsGraph_limitJointSpeeds(const RcsGraph* self, MatNd* dq, double dt,
 
   RCHECK_MSG((dq->m==dimension && dq->n==1) || (dq->m==1 &&  dq->n==dimension),
              "dq is of size %d x %d - should be %d x 1 or 1 x %d",
-             dq->m , dq->n, dimension, dimension);
+             dq->m, dq->n, dimension, dimension);
 
   int theEvilIndex = 0;
   double sc_i = 1.0, sc = 1.0;
@@ -2509,7 +2512,9 @@ bool RcsGraph_updateSlaveJoints(const RcsGraph* self, MatNd* q, MatNd* q_dot)
       double q_slave    = RcsJoint_computeSlaveJointAngle(JNT, q_master);
 
       // Compare with original joint angle
-      if (q_slave != q->ele[JNT->jointIndex])
+      const double eps = 1.0e-8;
+      double qErr = fabs(q_slave-q->ele[JNT->jointIndex]);
+      if (qErr>eps)
       {
         qHasChanged = true;
       }
@@ -2604,18 +2609,15 @@ int RcsGraph_coupledJointMatrix(const RcsGraph* self, MatNd* A, MatNd* invA)
   MatNd* invDiagAtA = NULL;
   MatNd_create2(invDiagAtA, nqr, 1);
 
-  MatNd_reshape(A, nq, nqr);
-  MatNd_setZero(A);
-
-  MatNd_reshape(invA, nqr, nq);
-  MatNd_setZero(invA);
+  MatNd_reshapeAndSetZero(A, nq, nqr);
+  MatNd_reshapeAndSetZero(invA, nqr, nq);
 
   unsigned int nColumsA = 0;
 
   for (int col=0; col<nq; col++)
   {
     // Compute column sum
-    double absColSum = MatNd_get2(colSum, 0, col);
+    double absColSum = fabs(MatNd_get2(colSum, 0, col));
 
     if (absColSum>0.0)
     {
@@ -2644,18 +2646,17 @@ int RcsGraph_coupledJointMatrix(const RcsGraph* self, MatNd* A, MatNd* invA)
 
 
   // Test
-  // MatNd* invA2 = NULL;
-  // MatNd_create2(invA2, nqr, nq);
-  // MatNd_rwPinv2(invA2, A, NULL, NULL);
-  // MatNd_printCommentDigits("invA", invA, 4);
-  // MatNd_printCommentDigits("invA2", invA2, 4);
-  // MatNd_destroy(invA2);
+  //MatNd* invA2 = NULL;
+  //MatNd_create2(invA2, nqr, nq);
+  //MatNd_rwPinv2(invA2, A, NULL, NULL);
+  //MatNd_printCommentDigits("invA", invA, 4);
+  //MatNd_printCommentDigits("invA2", invA2, 4);
+  //MatNd_destroy(invA2);
 
 
   MatNd_destroy(H);
   MatNd_destroy(colSum);
   MatNd_destroy(invDiagAtA);
-
 
   return nCoupledJoints;
 }
@@ -2699,8 +2700,19 @@ static void RcsGraph_recomputeJointIndices(RcsGraph* self, MatNd* stateVec[],
     }
     nqCount++;
 
-    JNT->jacobiIndex = (JNT->constrained == false) ? njCount : -1;
-    njCount++;
+    //JNT->jacobiIndex = (JNT->constrained == false) ? njCount : -1;
+    //njCount++;
+
+    if (JNT->constrained == false)
+    {
+      JNT->jacobiIndex = njCount;
+      njCount++;
+    }
+    else
+    {
+      JNT->jacobiIndex = -1;
+    }
+
   }
 
   self->q->m = nqCount;
@@ -2721,8 +2733,8 @@ static void RcsGraph_recomputeJointIndices(RcsGraph* self, MatNd* stateVec[],
 }
 
 /*******************************************************************************
-* See header.
-******************************************************************************/
+ * See header.
+ ******************************************************************************/
 void RcsGraph_makeJointsConsistent(RcsGraph* self)
 {
   // Re-order joint indices according to depth-first traversal.
@@ -2790,10 +2802,7 @@ void RcsGraph_makeJointsConsistent(RcsGraph* self)
  ******************************************************************************/
 void RcsGraph_fprintXML(FILE* out, const RcsGraph* self)
 {
-  RCHECK(out);
-  RCHECK(self);
-
-  fprintf(out, "<Graph>\n\n");
+  fprintf(out, "<Graph name=\"DefaultPose\" >\n\n");
 
   RCSGRAPH_TRAVERSE_BODIES(self)
   {
@@ -2809,6 +2818,8 @@ void RcsGraph_fprintXML(FILE* out, const RcsGraph* self)
                SENSOR->name ? SENSOR->name : "NULL",
                SENSOR->body ? SENSOR->body->name : "NULL");
   }
+
+  RcsGraph_fprintModelState(out, self, self->q);
 
   fprintf(out, "</Graph>\n");
 }
@@ -3025,26 +3036,26 @@ void RcsGraph_scale(RcsGraph* graph, double scale)
 
   RCSGRAPH_TRAVERSE_BODIES(graph)
   {
-      double k_org[3];
-      Vec3d_add(k_org, origin, BODY->A_BI->org);
-      Vec3d_rotateSelf(k_org, BODY->A_BI->rot);
-      RcsBody_scale(BODY, scale);
-    }
+    double k_org[3];
+    Vec3d_add(k_org, origin, BODY->A_BI->org);
+    Vec3d_rotateSelf(k_org, BODY->A_BI->rot);
+    RcsBody_scale(BODY, scale);
+  }
 
   RCSGRAPH_TRAVERSE_JOINTS(graph)
-    {
+  {
     if (RcsJoint_isTranslation(JNT) == true)
     {
       graph->q->ele[JNT->jointIndex] *= scale;
-  }
-
     }
 
   }
 
+}
+
 /*******************************************************************************
-* See header.
-******************************************************************************/
+ * See header.
+ ******************************************************************************/
 bool RcsGraph_removeBody(RcsGraph* self, const char* bdyName,
                          MatNd* stateVec[], unsigned int nVec)
 {
@@ -3096,15 +3107,21 @@ bool RcsGraph_removeBody(RcsGraph* self, const char* bdyName,
     RCHECK(self->root);
   }
 
+  // In case the body is attached to its parent by one or more joints, we need
+  // to update the joint and Jacobi indices.
+  if (bdy->jnt)
+  {
+    RcsGraph_recomputeJointIndices(self, stateVec, nVec);
+  }
+
   RcsBody_destroy(bdy);
-  RcsGraph_recomputeJointIndices(self, stateVec, nVec);
 
   return true;
 }
 
 /*******************************************************************************
-*
-******************************************************************************/
+ *
+ ******************************************************************************/
 bool RcsGraph_addBody(RcsGraph* graph, RcsBody* parent, RcsBody* body,
                       MatNd* stateVec[], unsigned int nVec)
 {
@@ -3257,10 +3274,49 @@ void RcsGraph_addRandomGeometry(RcsGraph* self)
 
 }
 
-/******************************************************************************
+/*******************************************************************************
+ * See header.
+ ******************************************************************************/
+void RcsGraph_computeAABB(const RcsGraph* self,
+                          double xyzMin[3], double xyzMax[3])
+{
+  if (self == NULL || RcsGraph_numBodies(self)==0)
+  {
+    RLOG(4, "Graph is NULL or has no shapes - AABB is set to zero");
+    Vec3d_setZero(xyzMin);
+    Vec3d_setZero(xyzMax);
+    return;
+  }
+
+  Vec3d_set(xyzMin, DBL_MAX, DBL_MAX, DBL_MAX);
+  Vec3d_set(xyzMax, -DBL_MAX, -DBL_MAX, -DBL_MAX);
+
+  RCSGRAPH_TRAVERSE_BODIES(self)
+  {
+    double C_min[3], C_max[3];
+    RcsBody_computeAABB(BODY, C_min, C_max);
+
+    for (int j = 0; j < 3; ++j)
+    {
+      if (C_min[j] < xyzMin[j])
+      {
+        xyzMin[j] = C_min[j];
+      }
+
+      if (C_max[j] > xyzMax[j])
+      {
+        xyzMax[j] = C_max[j];
+      }
+    }
+  }
+
+}
+
+/*******************************************************************************
  *
- *****************************************************************************/
-RcsMeshData* RcsGraph_meshify(const RcsGraph* self, double scale, char computeType)
+ ******************************************************************************/
+RcsMeshData* RcsGraph_meshify(const RcsGraph* self, double scale,
+                              char computeType)
 {
   if (self==NULL)
   {
@@ -3304,7 +3360,7 @@ RcsMeshData* RcsGraph_meshify(const RcsGraph* self, double scale, char computeTy
     }
   }
 
-  if (scale != 1.0)
+  if ((scale!=1.0) && (allMesh!=NULL))
   {
     RcsMesh_scale(allMesh, scale);
   }

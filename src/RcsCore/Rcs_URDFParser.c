@@ -151,6 +151,10 @@ static RcsShape* parseShapeURDF(xmlNode* node, RcsBody* body)
     else
     {
       RcsMeshData* mesh = RcsMesh_createFromFile(shape->meshFile);
+      if (mesh==NULL)
+      {
+        RLOG(4, "Couldn't create mesh for file \"%s\"", shape->meshFile);
+      }
       shape->userData = (void*) mesh;
     }
 
@@ -160,11 +164,16 @@ static RcsShape* parseShapeURDF(xmlNode* node, RcsBody* body)
                "Only uniform scaling is supported in Rcs");
 
     shape->scale = scale_3d[0];
+
+    if ((RcsMeshData*) shape->userData)
+    {
+      RcsMesh_scale((RcsMeshData*) shape->userData, shape->scale);
+    }
   }
   else
   {
     RLOG(1, "URDF: Unsupported shape type: \"%s\" (parent: \"%s\")",
-         geometry_type_node ? (const char*)geometry_type_node->name : "NULL", 
+         geometry_type_node ? (const char*)geometry_type_node->name : "NULL",
          (const char*)geometry_node->name);
   }
 
@@ -369,8 +378,8 @@ static RcsBody* parseBodyURDF(xmlNode* node)
     body->physicsSim = RCSBODY_PHYSICS_DYNAMIC;
     if (numCollisionShapes == 0)
     {
-      RLOG(1, "You specified a non-zero mass but no collision shapes for body \"%s\". "
-              "Body will not partake in physics simulation", body->name);
+      RLOG(1, "You specified a non-zero mass but no collision shapes for body "
+           "\"%s\". It will not work in physics simulations", body->name);
       body->physicsSim = RCSBODY_PHYSICS_NONE;
     }
   }
@@ -877,10 +886,11 @@ RcsBody* RcsGraph_rootBodyFromURDFFile(const char* filename,
       if (suffix != NULL)
       {
         size_t nameLen = strlen(b->name) + strlen(suffix) + 1;
-        char* newName = RNSTALLOC(nameLen, char);
+        char* newName = RNALLOC(nameLen, char);
         strcpy(newName, b->name);
         strcat(newName, suffix);
         String_copyOrRecreate(&b->name, newName);
+        RFREE(newName);
       }
 
       RCHECK(bdyIdx<numLinks);
@@ -908,10 +918,11 @@ RcsBody* RcsGraph_rootBodyFromURDFFile(const char* filename,
       if (suffix != NULL)
       {
         size_t nameLen = strlen(j->name) + strlen(suffix) + 1;
-        char* newName = RNSTALLOC(nameLen, char);
+        char* newName = RNALLOC(nameLen, char);
         strcpy(newName, j->name);
         strcat(newName, suffix);
         String_copyOrRecreate(&j->name, newName);
+        RFREE(newName);
       }
       RCHECK(jntIdx<numJnts);
       jntVec[jntIdx++] = j;

@@ -79,6 +79,12 @@ public:
    */
   virtual void computeX(double* x_res) const;
 
+  /*! \brief Calculates the difference of the closest distance between refBdy
+   *         and effector to the desired x_des.
+   */
+  virtual void computeDX(double* dx, const double* x_des,
+                         const double* x_curr) const;
+
   /*! \brief Computes current task Jacobian to parameter \e jacobian.
    *
    *  \param[out] jacobian Task Jacobian with dimension 3 x nJ
@@ -109,6 +115,18 @@ public:
    *         - XML tag "controlVariable" is "Distance3D"
    */
   static bool isValid(xmlNode* xml_node, const RcsGraph* graph);
+
+  /*! \brief Returns true if the task's effector and refBody have one or more
+   *         distance queried that are called in RcsBody_distance(). In case
+   *         there is no effector, refBody, or distance function, the function
+   *         will warn on debug level 1.
+   */
+  static bool hasDistanceFunction(xmlNode* node, const RcsGraph* graph);
+
+
+protected:
+
+  double gainDX;
 };
 }
 

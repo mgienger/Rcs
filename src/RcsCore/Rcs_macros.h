@@ -205,7 +205,11 @@ extern RCSCORE_API RCS_MALLOC_FUNC Rcs_calloc;
 /*! \ingroup RcsMacros
  *  \brief Gets the memory for nMemb variables of the given type from the
  *         stack. It must not be freed, otherwise there will be undefined
- *         behavior. The memory is uninitialized.
+ *         behavior. The memory is uninitialized. The alloca function is not
+ *         part of the C standard, and deemed unsafe. However, it behaves the
+ *         same as the variable sized arrays in C99, which we allow to use.
+ *         Therefore using alloca is accepted if used with care (small memory
+ *         allocations, no recursions, etc.).
  */
 #define RNSTALLOC(nMemb, type) (type*) alloca((nMemb)*sizeof(type))
 
@@ -213,7 +217,6 @@ extern RCSCORE_API RCS_MALLOC_FUNC Rcs_calloc;
 /*! \ingroup RcsMacros
  *  \brief Print macro.
  */
-#if !defined(_MSC_VER)
 #define RMSG(...) \
   do { \
     fprintf(stderr, "[%s: %s(%d)]: ", __FILENAME__, __FUNCTION__, __LINE__); \
@@ -221,15 +224,6 @@ extern RCSCORE_API RCS_MALLOC_FUNC Rcs_calloc;
     fprintf(stderr, "\n"); \
     fflush(stderr); \
   } while (0)
-#else
-#define RMSG(...) \
-  do { \
-    fprintf(stderr, "[%s: %s(%d)]: ", __FILENAME__, __FUNCTION__, __LINE__); \
-    fprintf(stderr, __VA_ARGS__); \
-    fprintf(stderr, "\n"); \
-    fflush(stderr); \
-  } while (0)
-#endif
 
 /*! \ingroup RcsMacros
  *  \brief Print macro (short form)
@@ -382,6 +376,11 @@ extern RCSCORE_API RCS_MALLOC_FUNC Rcs_calloc;
   do { \
     if (debugLevel <= RcsLogLevel) { \
       std::cerr << "[" << __FILENAME__ << ": " << __FUNCTION__ << "(" << __LINE__ << ")]: " << msg << std::endl; } \
+  } while (0)
+
+#define RMSG_CPP(msg)               \
+  do { \
+    std::cerr << "[" << __FILENAME__ << ": " << __FUNCTION__ << "(" << __LINE__ << ")]: " << msg << std::endl; \
   } while (0)
 #endif
 

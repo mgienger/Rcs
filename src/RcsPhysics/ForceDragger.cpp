@@ -36,6 +36,8 @@
 
 #include "ForceDragger.h"
 
+#include <BodyNode.h>
+#include <Rcs_graphicsUtils.h>
 #include <KeyCatcherBase.h>
 #include <Rcs_macros.h>
 #include <Rcs_Vec3d.h>
@@ -49,6 +51,7 @@ Rcs::ForceDragger::ForceDragger(PhysicsBase* physics_) : BodyPointDragger(),
   physics(physics_)
 {
   RCHECK(this->physics);
+  setName("ForceDragger");
 
   KeyCatcherBase::registerKey("Left", "Move body under mouse -Y",
                               "Force dragger");
@@ -69,6 +72,17 @@ void Rcs::ForceDragger::update()
   Vec3d_sub(f, _I_mouseTip, _I_anchor);
   Vec3d_constMulSelf(f, getForceScaling()*(_leftControlPressed ? 10.0 : 1.0));
   physics->applyForce(_draggedBody, f, _k_anchor);
+}
+
+/******************************************************************************
+ * Computes the world anchor point of the mouse tip. Called by MouseDragger
+ * in the event update traversal.
+ *****************************************************************************/
+void Rcs::ForceDragger::updateWorldAnchor()
+{
+  HTr physicsTrf;
+  physics->getPhysicsTransform(&physicsTrf, _draggedBody);
+  Vec3d_transform(_I_anchor, &physicsTrf, _k_anchor);
 }
 
 /******************************************************************************
@@ -127,4 +141,30 @@ bool Rcs::ForceDragger::callback(const osgGA::GUIEventAdapter& ea,
   }   // switch(ea.getEventType())
 
   return false;
+}
+
+/******************************************************************************
+ * Same as in MouseDragger, except that the physics transformation is used.
+ *****************************************************************************/
+const RcsBody* Rcs::ForceDragger::getBodyUnderMouse(const osgGA::GUIEventAdapter& ea,
+                                                    osgGA::GUIActionAdapter& aa,
+                                                    double I_pt[3], double k_pt[3])
+{
+  Rcs::BodyNode* nd = getNodeUnderMouse<Rcs::BodyNode*>(ea, aa, I_pt);
+
+  if (nd == NULL)
+  {
+    return NULL;
+  }
+
+  const RcsBody* bdy = nd->body();
+
+  if (k_pt && I_pt)
+  {
+    HTr physicsTrf;
+    physics->getPhysicsTransform(&physicsTrf, bdy);
+    Vec3d_invTransform(k_pt, &physicsTrf, I_pt);
+  }
+
+  return bdy;
 }

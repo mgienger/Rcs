@@ -61,11 +61,6 @@ extern "C" {
  *         frame 1 into frame 2. It also means that the rows of matrix A_21
  *         correspond to the unit vectors of frame 2, represented in frame 1.
  *
- *         Warning: Because of the row-major form, the transpose of the
- *         rotation matrix is used. So when reading out a normal homogeneous
- *         transformation matrix (for example for debugging), the rotation
- *         matrix needs to be transposed.
- *
  */
 typedef struct
 {
@@ -102,6 +97,12 @@ void HTr_fprint(FILE* fd, const HTr* A);
 void HTr_print(const HTr* A);
 
 /*! \ingroup RcsHTrFunctions
+ *  \brief Prints the transform with a comment string. If comment is NULL,
+ *         it will be skipped.
+ */
+void HTr_printComment(const char* comment, const HTr* A);
+
+/*! \ingroup RcsHTrFunctions
  *  \brief Returns an identity HTr from the heap. You have to take care
  *         that it gets deleted. The function terminates if no memory could
  *         be allocated.
@@ -120,6 +121,12 @@ HTr* HTr_clone(const HTr* src);
  *         origin to [0 0 0].
  */
 void HTr_setIdentity(HTr* self);
+
+/*! \ingroup RcsHTrFunctions
+ *  \brief Sets the matrix part to a random rotation matrix (valid) and the
+ *         vector part to a random vector [-1 ... 1]
+ */
+void HTr_setRandom(HTr* self);
 
 /*! \ingroup RcsHTrFunctions
  *  \brief Sets all elements of the transformation to 0.
@@ -148,6 +155,11 @@ void HTr_copy(HTr* dst, const HTr* src);
 void HTr_transpose(HTr* A_12, const HTr* A_21);
 
 /*! \ingroup RcsHTrFunctions
+ *  \brief Invert transformation in place.
+ */
+void HTr_transposeSelf(HTr* A_12);
+
+/*! \ingroup RcsHTrFunctions
  *  \brief Transformation from body to world coordinates
  *
  *         A_2I  = A_21 * A_1I
@@ -168,6 +180,11 @@ void HTr_transformSelf(HTr* A_2I /* in as A_1I */, const HTr* A_21);
 void HTr_invTransform(HTr* A_21, const HTr* A_1I, const HTr* A_2I);
 
 /*! \ingroup RcsHTrFunctions
+ *  \brief See HTr_invTransform().
+ */
+void HTr_invTransformSelf(HTr* A_21 /* in as A_2I */, const HTr* A_1I);
+
+/*! \ingroup RcsHTrFunctions
  *  \brief Returns a pointer to an identity transform. This points to a
  *         static variable. Please NEVER change the contents of this pointer,
  *         since this affects every caller to this function.
@@ -178,7 +195,7 @@ const HTr* HTr_identity();
  *  \brief Writes the contents of a given HTr into a given string(char*) as
  *         one line
  *
- *  Length of the string should be at least 30 * 12 = 360 chars to assure
+ *  Length of the string should be at least 15 * 12 = 180 chars to assure
  *  there no invalid write
  */
 void HTr_toString(char* str, const HTr* A);

@@ -335,14 +335,16 @@ double VecNd_norm(const double* v, double p, unsigned int n)
 {
   RCHECK(p != 0.0);
 
-  double* temp_vec = RNSTALLOC(n, double);
-  VecNd_copy(temp_vec, v, n);
-  VecNd_absSelf(temp_vec, n);
-  VecNd_powEleSelf(temp_vec, p, n);
-  double no = VecNd_sum(temp_vec, n);
-  no = pow(no, 1/p);
-  return no;
+  double no = 0.0;
+
+  for (unsigned int i = 0; i < n; ++i)
+  {
+    no += pow(fabs(v[i]), p);
+  }
+
+  return pow(no, 1.0/p);
 }
+
 
 /*******************************************************************************
  *
@@ -711,27 +713,9 @@ void VecNd_setRandom(double* x, double lower, double upper, unsigned int nEle)
  ******************************************************************************/
 void VecNd_addRandom(double* x, double lower, double upper, unsigned int nEle)
 {
-  double range    = upper - lower;
-  double center   = lower + range / 2.0;
-  unsigned int i;
-  double ele;
-  static int init = false;
-
-  RCHECK_MSG(range >= 0.0, "Lower limit (%g) is larger than upper one (%g)!",
-             lower, upper);
-
-  if (init==false)
+  for (unsigned int i = 0; i < nEle; i++)
   {
-    init = true;
-    Math_srand48((long)(Timer_getTime()));
-  }
-
-
-  for (i = 0; i < nEle; i++)
-  {
-    ele = range * ((drand48() - 0.5)) + center;
-    RCHECK((ele >= lower) && (ele <= upper));
-    x[i] += ele;
+    x[i] += Math_getRandomNumber(lower, upper);
   }
 }
 

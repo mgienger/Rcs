@@ -37,6 +37,7 @@
 #ifndef RCS_PHYSICSBASE_H
 #define RCS_PHYSICSBASE_H
 
+#include "PhysicsConfig.h"
 #include "Rcs_graph.h"
 
 #include <vector>
@@ -46,7 +47,7 @@
 /*!
  *  \defgroup RcsPhysics Physics simulation
  *
- *  A library for rigid body physics simulation.
+ *  A library for rigid and soft body physics simulation.
  *
  */
 
@@ -117,6 +118,32 @@ public:
                         MatNd* q_ddot=NULL, MatNd* T=NULL,
                         bool control=false) = 0;
 
+  /*! \brief Computes a single simulation step with the given time interval
+   *         in [secs].
+   *
+   *  \param[in] dt      Simulation time interval in seconds. If it is smaller
+   *                     or equal to zero, the function returns without doing
+   *                     anything.
+   *  \param[out] graph  Graph that will be updated with the simulation state.
+   *                     All simulated joint positions and velocities will be
+   *                     copied into RcsGraph::q and RcsGraph::q_dot. Further,
+   *                     all sensor data of the graph will be updated. It is
+   *                     assumed that the graph has the same structure as the
+   *                     one underlying the simulation.
+   *  \param[out] q_ddot Vector holding the value for each degree of freedom
+   *                     acceleration. If the vector is on input of dimension
+   *                     RcsGraph::dof x 1, all degrees of freedom are copied.
+   *                     If it is of dimension RcsGraph::nJ x 1, only the
+   *                     unconstrained dof are considered. The array is not
+   *                     reshaped. If its row size is neither RcsGraph::dof
+   *                     nor RcsGraph::nJ, the function exits with a fatal
+   *                     error.
+   *  \param[out] T      Vector holding the value for each degree of freedom
+   *                     torque. It is treated similarly as input parameter
+   *                     q_ddot.
+   *  \param[in] control If true, the function applies the previously set
+   *                     control command (see \ref setControlInput()).
+   */
   virtual void simulate(double dt, RcsGraph* graph, MatNd* q_ddot = NULL,
                         MatNd* T=NULL, bool control=true);
 
@@ -124,6 +151,21 @@ public:
    *         momentum is zero.
    */
   virtual void reset() = 0;
+
+  /*! \brief Resets the simulation to the given state, so that all velocities
+   *         and momentum is zero.
+   *
+   *  \param[out] q      Vector holding the value for each degree of freedom.
+   *                     Must be of dimension RcsGraph::dof x 1 or
+   *                     RcsGraph::nJ x 1, otherwise the function exits with
+   *                     a fatal error.
+   */
+  virtual void reset(const MatNd* q);
+
+  /*! \brief Resets all kinematic and dynamic rigid bodies to their initial
+   *         state.
+   */
+  virtual void resetRigidBodies();
 
   /*! \brief Returns the name of the instance, such as used in the
    *         PhysicsFactory for instantiation.
@@ -143,8 +185,8 @@ public:
    *  \param[in] p      Force point in world coordinates. If NULL, force is
    *                    applied to object's COM.
    */
-    virtual void setForce(const RcsBody* body, const double F[3],
-                            const double p[3]) = 0;
+  virtual void setForce(const RcsBody* body, const double F[3],
+                        const double p[3]) = 0;
 
   /*! \brief Applies a force impulse to the body. Both force and point are
    *         in world coordinates.
@@ -154,8 +196,8 @@ public:
    *  \param[in] r      Force point in world coordinates. If NULL, force is
    *                    applied to object's COM.
    */
-    virtual void applyImpulse(const RcsBody* body, const double F[3],
-                              const double r[3]) = 0;
+  virtual void applyImpulse(const RcsBody* body, const double F[3],
+                            const double r[3]) = 0;
 
   /*! \brief Applies a force to the body. Both force and point are in world
    *         coordinates. The force will not be resetted after stepping the
@@ -343,8 +385,8 @@ public:
 
   /*! \brief Cloning function with optional graph.
    *
-   *  \param[in] newGraph     RcsGraph to refer to. If it is NULL, the graph
-   *                          of the copy points to the one it is copied from.
+   *  \param[in] newGraph  RcsGraph to refer to. If it is NULL, the graph
+   *                       of the copy points to the one it is copied from.
    */
   virtual PhysicsBase* clone(RcsGraph* newGraph=NULL) const = 0;
 
@@ -354,7 +396,15 @@ public:
   virtual void getJointCompliance(MatNd* stiffness,
                                   MatNd* damping=NULL) const = 0;
 
+  virtual bool initialize(const RcsGraph* g, const PhysicsConfig* config) = 0;
 
+  /*! \brief Creates a physicsConfig class instance and calls
+   *         \ref initialize(const RcsGraph*, const PhysicsConfig*)
+   *
+   *  \param[in] graph          Underlying RcsGraph structure
+   *  \param[in] physicsCfgFile Physics configuration file or NULL
+   */
+  virtual bool initialize(const RcsGraph* graph, const char* physicsCfgFile);
 
 
 
@@ -375,6 +425,12 @@ public:
    */
   virtual bool setParameter(ParameterCategory category,
                             const char* name, const char* type, double value);
+
+  /*! \brief Empty default constructor. All members are initialized to NULL.
+   *         The initialize() function needs to be called to properly
+   *         initialize the class.
+   */
+  PhysicsBase();
 
   /*! \brief Base class constructor.
    *
@@ -509,6 +565,10 @@ public:
 
 protected:
 
+  /*! \brief Clones the graph and creates the classes internal arrays.
+   */
+  virtual void initGraph(const RcsGraph* graph);
+
   /*! \brief Sets the internal simulation time.
    */
   virtual void setTime(double t);
@@ -533,4 +593,3 @@ private:
 }   // namespace Rcs
 
 #endif // RCS_PHYSICSBASE_H
-

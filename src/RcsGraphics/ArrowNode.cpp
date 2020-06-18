@@ -51,8 +51,8 @@
  ******************************************************************************/
 Rcs::ArrowNode::ArrowNode() :
   NodeBase(),
-  originPtr(Vec3d_zeroVec()),
-  directionPtr(Vec3d_zeroVec()),
+  originPtr(staticOrigin),
+  directionPtr(staticDirection),
   offsetPtr(Vec3d_zeroVec()),
   scaleFactor(1.0),
   radius(0.005)
@@ -88,6 +88,7 @@ Rcs::ArrowNode::ArrowNode(const double* org,
 void Rcs::ArrowNode::init(double length, double radius,
                           const std::string& color)
 {
+  setName("ArrowNode");
   Vec3d_setZero(this->staticOrigin);
   Vec3d_setUnitVector(this->staticDirection, 2);
 

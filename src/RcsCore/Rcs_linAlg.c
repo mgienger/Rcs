@@ -214,15 +214,17 @@ static inline void MatNd_inverseLowerTriangularMatrixSelf(MatNd* L_)
 {
   const int n = L_->m;
   double* L = L_->ele;
-  int k, i;
 
-  for (k=0; k<n; k++)                                                // 1
+  for (int k=0; k<n; k++)                                            // 1
   {
-    L[k*n+k] = 1.0/L[k*n+k];                                         // 2
+    const int knpk = k*n+k;
+    L[knpk] = 1.0/L[knpk];                                           // 2
 
-    for (i=k+1; i<n; i++)                                            // 3
+    for (int i=k+1; i<n; i++)                                        // 3
     {
-      L[i*n+k] = -dot(&L[i*n+k], 1, &L[k*n+k], n, i-0-k)/L[i*n+i];   // 4
+      const int in   = i*n;
+      const int inpk = in+k;
+      L[inpk] = -dot(&L[inpk], 1, &L[knpk], n, i-k)/L[in+i];         // 4
     }                                                                // 5
   }                                                                  // 6
 }
@@ -244,21 +246,23 @@ static inline void MatNd_inverseLowerTriangularMatrixSelf(MatNd* L_)
  *  6. end for k
  *
  ******************************************************************************/
-static inline void MatNd_inverseLoweHTriangularMatrix(MatNd* X_,
+static inline void MatNd_inverseLowerTriangularMatrix(MatNd* X_,
                                                       const MatNd* L_)
 {
   const int n = L_->m;
   double* L = L_->ele;
   double* X = X_->ele;
-  int k, i;
 
-  for (k=0; k<n; ++k)                                                // 1
+  for (int k=0; k<n; ++k)                                            // 1
   {
-    X[k*n+k] = 1.0/L[k*n+k];                                         // 2
+    const int knpk = k*n+k;
+    X[knpk] = 1.0/L[knpk];                                           // 2
 
-    for (i=k+1; i<n; i++)                                            // 3
+    for (int i=k+1; i<n; i++)                                        // 3
     {
-      X[i*n+k] = -dot(&L[i*n+k], 1, &X[k*n+k], n, i-0-k)/L[i*n+i];   // 4
+      const int in   = i*n;
+      const int inpk = in+k;
+      X[inpk] = -dot(&L[inpk], 1, &X[knpk], n, i-k)/L[in+i];         // 4
     }                                                                // 5
   }                                                                  // 6
 }
@@ -377,3 +381,65 @@ int MatNd_gaussSeidelSolve(MatNd* x, const MatNd* A, const MatNd* b)
   return MatNd_gaussSeidelIterate(x, A, b, 1.0e-8, -1);
 }
 
+/*******************************************************************************
+ * We define these here so that there's no linker errors in case no Eigen3
+ * library is present.
+ ******************************************************************************/
+#if !defined (USE_EIGEN3)
+// Under Visual Studio, we compile all C-files with the C++ compiler due to the
+// lack of C99 support. Therefore we need the extern C directive here.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+unsigned int MatNd_SVD(MatNd* U, MatNd* S, MatNd* V, const MatNd* J,
+                       double eps)
+{
+  RFATAL("Function not available. Did you compile with Eigen3 support?");
+  return 0;
+}
+
+double MatNd_SVDSolve(MatNd* x, const MatNd* A, const MatNd* b)
+{
+  RFATAL("Function not available. Did you compile with Eigen3 support?");
+  return 0.0;
+}
+
+unsigned int MatNd_SVDInverse(MatNd* inv, const MatNd* src)
+{
+  RFATAL("Function not available. Did you compile with Eigen3 support?");
+  return 0;
+}
+
+unsigned int MatNd_SVDInverseSelf(MatNd* A)
+{
+  RFATAL("Function not available. Did you compile with Eigen3 support?");
+  return 0;
+}
+
+unsigned int MatNd_rank(const MatNd* J, double eps)
+{
+  RFATAL("Function not available. Did you compile with Eigen3 support?");
+  return 0;
+}
+
+void MatNd_QRDecomposition(MatNd* Q, MatNd* R, const MatNd* A)
+{
+  RFATAL("Function not available. Did you compile with Eigen3 support?");
+}
+
+bool MatNd_getEigenVectors(MatNd* V, double* d, const MatNd* A)
+{
+  RFATAL("Function not available. Did you compile with Eigen3 support?");
+  return false;
+}
+
+void MatNd_HouseholderQR(MatNd* X, const MatNd* A, const MatNd* B)
+{
+  RFATAL("Function not available. Did you compile with Eigen3 support?");
+}
+
+#ifdef __cplusplus
+}
+#endif
+#endif   // USE_EIGEN3

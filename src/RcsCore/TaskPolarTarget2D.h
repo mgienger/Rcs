@@ -143,12 +143,36 @@ public:
    */
   static bool isValid(xmlNode* node, const RcsGraph* graph);
 
+  /*! \brief Assigns the given Polar angles to the class member polarDes.
+   */
   void setTarget(const double polarTarget[2]);
+
+  /*! \brief Assigns the given Polar angles to the class member polarDes.
+   */
   void setTarget(double phi, double theta);
 
 
 protected:
+
+  /*! \brief Constructs a rotation matrix A_SR with the z-axis being the
+   *         current Polar axis. It is determined based on the tasks's bodies
+   *         and the state of the graph. The y-axis is the rotation axis that
+   *         is perpendicular to the plane spanned by current and desired
+   *         Polar axis. Rotating about it will move the current to the
+   *         axis on the shortest possible path. The x-axis completes a
+   *         right hand frame. All axes are normalized. In case the angle
+   *         between current and desired axis is zero, there are infinity
+   *         solutions to determine the y-axis. We then just pick any of
+   *         these.
+   */
+  void computeSlerpFrame(double A_SR[3][3],
+                         const double polarDes[2]) const;
+
+  /*! \brief Calls \ref computeSlerpFrame(double[3][3], const double[2]) const
+  *          with the polarDes member variable.
+   */
   void computeSlerpFrame(double A_SR[3][3]) const;
+
   int direction;
   double polarDes[2];
 };

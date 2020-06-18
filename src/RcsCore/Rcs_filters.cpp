@@ -147,7 +147,7 @@ Rcs::RampND::~RampND()
 {
   for (size_t i=0; i<dim; i++)
   {
-    delete(filt[i]);
+    delete (filt[i]);
   }
 
   delete [] filt;
@@ -233,6 +233,15 @@ void Rcs::SecondOrderLPF1D::setState(double x_, double x_dot_)
 {
   x     = x_;
   x_dot = x_dot_;
+}
+
+double Rcs::SecondOrderLPF1D::iterate(double goal, double addedAccel)
+{
+  double x_ddot = computeAcceleration(goal) + addedAccel;
+  x += x_dot * dt + 0.5*x_ddot*dt*dt;
+  x_dot += x_ddot * dt;
+
+  return x_ddot;
 }
 
 double Rcs::SecondOrderLPF1D::iterate(double goal)
@@ -385,7 +394,7 @@ Rcs::SecondOrderLPFND::SecondOrderLPFND(double tmc, double dt, size_t dim_) :
   }
 }
 
-Rcs::SecondOrderLPFND::SecondOrderLPFND(double* x, double tmc, double dt,
+Rcs::SecondOrderLPFND::SecondOrderLPFND(const double* x, double tmc, double dt,
                                         size_t dim_) :
   filt(NULL), dim(dim_)
 {
@@ -403,7 +412,7 @@ Rcs::SecondOrderLPFND::~SecondOrderLPFND()
 {
   for (size_t i=0; i<dim; i++)
   {
-    delete(filt[i]);
+    delete (filt[i]);
   }
 
   delete [] filt;
@@ -441,6 +450,15 @@ void Rcs::SecondOrderLPFND::setDim(size_t dim_)
 size_t Rcs::SecondOrderLPFND::getDim() const
 {
   return this->dim;
+}
+
+void Rcs::SecondOrderLPFND::iterate(double* x_ddot, const double* goal,
+                                    const double* addedAccel)
+{
+  for (size_t i = 0; i < dim; i++)
+  {
+    x_ddot[i] = filt[i]->iterate(goal[i], addedAccel[i]);
+  }
 }
 
 void Rcs::SecondOrderLPFND::iterate(double* x_ddot, const double* goal)
@@ -508,7 +526,7 @@ void Rcs::SecondOrderLPFND::setDamping(double damping)
   }
 }
 
-void Rcs::SecondOrderLPFND::setTarget(double* target)
+void Rcs::SecondOrderLPFND::setTarget(const double* target)
 {
   for (size_t i=0; i<dim; i++)
   {
@@ -596,8 +614,9 @@ void Rcs::RampFilterND::iterate(double* x_ddot)
 
 void Rcs::RampFilterND::iterate()
 {
-  double* x_ddot = RNSTALLOC(dim, double);
+  double* x_ddot = new double[dim];
   iterate(x_ddot);
+  delete [] x_ddot;
 }
 
 double Rcs::RampFilterND::getRamp(size_t index) const
@@ -713,7 +732,7 @@ Rcs::MedianFilterND::~MedianFilterND()
 {
   for (size_t i=0; i<dim; i++)
   {
-    delete(filter[i]);
+    delete (filter[i]);
   }
 
   delete [] filter;
@@ -766,4 +785,3 @@ void Rcs::MedianFilterND::getMedian(double* median) const
     median[i] = filter[i]->getMedian();
   }
 }
-

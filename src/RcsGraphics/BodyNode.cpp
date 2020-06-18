@@ -39,7 +39,9 @@
 
 #include <Rcs_resourcePath.h>
 #include <Rcs_Vec3d.h>
+#include <Rcs_Mat3d.h>
 #include <Rcs_typedef.h>
+#include <Rcs_joint.h>
 #include <Rcs_macros.h>
 #include <Rcs_timer.h>
 #include <Rcs_utils.h>
@@ -47,6 +49,7 @@
 #include <COSNode.h>
 #include <MeshNode.h>
 #include <TorusNode.h>
+#include <SSRNode.h>
 
 #ifdef USE_OCTOMAP
 #include "OctomapNode.h"
@@ -125,52 +128,7 @@ public:
 
   virtual void operator()(osg::Node* node, osg::NodeVisitor* nv)
   {
-    const HTr* A = _bdyNode->getTransformPtr();
-
-    if (!HTr_isValid(A))
-    {
-      RLOG(3, "Body \"%s\" has invalid transformation - skipping update",
-           _bdyNode->getName().c_str());
-
-      RLOG(4, "\n\t%+5.4f   %+5.4f   %+5.4f"
-           "\n\t%+5.4f   %+5.4f   %+5.4f"
-           "\n\t%+5.4f   %+5.4f   %+5.4f",
-           A->rot[0][0], A->rot[0][1], A->rot[0][2],
-           A->rot[1][0], A->rot[1][1], A->rot[1][2],
-           A->rot[2][0], A->rot[2][1], A->rot[2][2]);
-      return;
-    }
-
-    // Set the nodes transform
-    _bdyNode->setTransformation(A);
-
-    // Update debug lines
-    if ((_bdyNode->body()->parent) && (_bdyNode->_debugLine.valid()))
-    {
-      _bdyNode->_debugLine->clear();
-
-      // Add the two body positions in local reference
-      HTr A_12;
-      HTr_invTransform(&A_12, _bdyNode->body()->A_BI,
-                       _bdyNode->body()->parent->A_BI);
-
-      _bdyNode->_debugLine->push_back(osg::Vec3(0.0, 0.0, 0.0));
-      _bdyNode->_debugLine->push_back(osg::Vec3(A_12.org[0],
-                                                A_12.org[1],
-                                                A_12.org[2]));
-
-      osg::DrawArrays* ps =
-        ((osg::DrawArrays*)(_bdyNode->_debugLineGeometry)->getPrimitiveSet(0));
-      ps->setCount(_bdyNode->_debugLine->size());
-      _bdyNode->_debugLineGeometry->setVertexArray(_bdyNode->_debugLine.get());
-      _bdyNode->_debugLineGeometry->setPrimitiveSet(0, ps);
-    }
-
-
-    // Change the geometry according to the bodies shapes
-    _bdyNode->updateDynamicShapes();
-
-    // Traverse subtree
+    _bdyNode->updateCallback(node, nv);
     traverse(node, nv);
   }
 
@@ -184,8 +142,8 @@ protected:
  ******************************************************************************/
 BodyNode::BodyNode(const RcsBody* b, float scale, bool resizeable) :
   bdy(b),
-  _resizeable(resizeable),
-  ghostMode(false)
+  ghostMode(false),
+  dynamicMeshUpdate(false)
 {
   RCHECK(this->bdy);
   setName(this->bdy->name ? this->bdy->name : "Unnamed body");
@@ -206,9 +164,10 @@ BodyNode::BodyNode(const RcsBody* b, float scale, bool resizeable) :
   _debugNode->setAllChildrenOff();
   addChild(_debugNode.get());
 
-  _collisionNode = addShapes(RCSSHAPE_COMPUTE_DISTANCE);
-  _graphicsNode  = addShapes(RCSSHAPE_COMPUTE_GRAPHICS);
-  _physicsNode   = addShapes(RCSSHAPE_COMPUTE_PHYSICS);
+  _collisionNode = addShapes(RCSSHAPE_COMPUTE_DISTANCE, resizeable);
+  _graphicsNode  = addShapes(RCSSHAPE_COMPUTE_GRAPHICS, resizeable);
+  _physicsNode   = addShapes(RCSSHAPE_COMPUTE_PHYSICS+
+                             RCSSHAPE_COMPUTE_SOFTPHYSICS, resizeable);
 
   _refNode->setAllChildrenOff();
   _collisionNode->setAllChildrenOff();
@@ -222,6 +181,11 @@ BodyNode::BodyNode(const RcsBody* b, float scale, bool resizeable) :
   _nodeSwitch->addChild(_graphicsNode.get());
   _nodeSwitch->addChild(_physicsNode.get());
   _nodeSwitch->addChild(_refNode.get());
+
+  _collisionNode->setName("BodyNode::CollisionNode");
+  _graphicsNode->setName("BodyNode::GraphicsNode");
+  _physicsNode->setName("BodyNode::PhysicsNode");
+  _refNode->setName("BodyNode::ReferenceFramesNode");
 
 
   // Assign the initial transformation to the node
@@ -251,7 +215,7 @@ BodyNode::BodyNode(const RcsBody* b, float scale, bool resizeable) :
  *                             |
  *                             ---> capsule, box, etc (osg::Capsule ...)
 *******************************************************************************/
-osg::Switch* BodyNode::addShapes(int mask)
+osg::Switch* BodyNode::addShapes(int mask, bool resizeable)
 {
   int shapeCount = 0;
   RcsShape** s = &this->bdy->shape[0];
@@ -262,7 +226,9 @@ osg::Switch* BodyNode::addShapes(int mask)
   // Loop through all shapes of the body
   while (*s)
   {
-    if (((*s)->computeType & mask) == 0)
+    RcsShape* shape = *s;
+
+    if ((shape->computeType & mask) == 0)
     {
       NLOG(0, "Skipping shape %d of %s", shapeCount, getName().c_str());
       s++;
@@ -274,11 +240,11 @@ osg::Switch* BodyNode::addShapes(int mask)
       new osg::PositionAttitudeTransform;
     osg::ref_ptr<osg::Geode> geode = new osg::Geode();
 
-    if (_resizeable)
+    if (resizeable)
     {
       _dynamicShapes.push_back(geode);
     }
-    DynamicShapeData* dnmData = new DynamicShapeData(*s);
+    DynamicShapeData* dnmData = new DynamicShapeData(shape);
     geode->setUserData(dnmData);
 
 #if 1
@@ -293,7 +259,7 @@ osg::Switch* BodyNode::addShapes(int mask)
 #endif
 
     // Relative orientation of shape wrt. body
-    const HTr* A_CB = &(*s)->A_CB;
+    const HTr* A_CB = &shape->A_CB;
     osg::Quat qA;
 
     qA.set(osg::Matrix(A_CB->rot[0][0], A_CB->rot[0][1], A_CB->rot[0][2], 0.0,
@@ -311,26 +277,26 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a capsule to the shapeNode
     /////////////////////////////////
 
-    if ((*s)->type == RCSSHAPE_SSL)
+    if (shape->type == RCSSHAPE_SSL)
     {
-      double r = (*s)->extents[0], length = (*s)->extents[2];
+      double r = shape->extents[0], length = shape->extents[2];
       osg::Capsule* capsule =
         new osg::Capsule(osg::Vec3(0.0, 0.0, length / 2.0), r, length);
-      osg::ShapeDrawable* shape = new osg::ShapeDrawable(capsule, hints.get());
-      if (_resizeable)
+      osg::ShapeDrawable* sd = new osg::ShapeDrawable(capsule, hints.get());
+      if (resizeable)
       {
-        shape->setUseDisplayList(false);
+        sd->setUseDisplayList(false);
       }
-      geode->addDrawable(shape);
+      geode->addDrawable(sd);
 
-      if ((*s)->color != NULL)
+      if (shape->color != NULL)
       {
-        setNodeMaterial((*s)->color, geode.get());
+        setNodeMaterial(shape->color, geode.get());
       }
 
       // Add the information for dynamic resizing
       dnmData->addGeometry(capsule);
-      dnmData->addDrawable(shape);
+      dnmData->addDrawable(sd);
     }
 
 
@@ -339,29 +305,29 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a box to the shapeNode
     /////////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_BOX)
+    else if (shape->type == RCSSHAPE_BOX)
     {
       NLOG(5, "Adding box %d of \"%s\" with dimension %f %f %f",
            shapeCount, getName().c_str(),
-           (*s)->extents[0], (*s)->extents[1], (*s)->extents[2]);
+           shape->extents[0], shape->extents[1], shape->extents[2]);
       osg::Box* box =
         new osg::Box(osg::Vec3(0.0, 0.0, 0.0),
-                     (*s)->extents[0], (*s)->extents[1], (*s)->extents[2]);
-      osg::ShapeDrawable* shape = new osg::ShapeDrawable(box, hints.get());
-      if (_resizeable)
+                     shape->extents[0], shape->extents[1], shape->extents[2]);
+      osg::ShapeDrawable* sd = new osg::ShapeDrawable(box, hints.get());
+      if (resizeable)
       {
-        shape->setUseDisplayList(false);
+        sd->setUseDisplayList(false);
       }
-      geode->addDrawable(shape);
+      geode->addDrawable(sd);
 
-      if ((*s)->color != NULL)
+      if (shape->color != NULL)
       {
-        setNodeMaterial((*s)->color, geode.get());
+        setNodeMaterial(shape->color, geode.get());
       }
 
       // Add the information for dynamic resizing
       dnmData->addGeometry(box);
-      dnmData->addDrawable(shape);
+      dnmData->addDrawable(sd);
     }
 
 
@@ -370,28 +336,28 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a sphere to the shapeNode
     /////////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_SPHERE)
+    else if (shape->type == RCSSHAPE_SPHERE)
     {
       NLOG(5, "Adding %s %d of \"%s\" with radius %f",
-           _resizeable ? "resizeable sphere" : " sphere",
-           shapeCount, getName().c_str(), (*s)->extents[0]);
+           resizeable ? "resizeable sphere" : " sphere",
+           shapeCount, getName().c_str(), shape->extents[0]);
       osg::Sphere* sphere =
-        new osg::Sphere(osg::Vec3(0.0, 0.0, 0.0), (*s)->extents[0]);
-      osg::ShapeDrawable* shape = new osg::ShapeDrawable(sphere, hints.get());
-      if (_resizeable)
+        new osg::Sphere(osg::Vec3(0.0, 0.0, 0.0), shape->extents[0]);
+      osg::ShapeDrawable* sd = new osg::ShapeDrawable(sphere, hints.get());
+      if (resizeable)
       {
-        shape->setUseDisplayList(false);
+        sd->setUseDisplayList(false);
       }
-      geode->addDrawable(shape);
+      geode->addDrawable(sd);
 
-      if ((*s)->color != NULL)
+      if (shape->color != NULL)
       {
-        setNodeMaterial((*s)->color, geode.get());
+        setNodeMaterial(shape->color, geode.get());
       }
 
       // Add the information for dynamic resizing
       dnmData->addGeometry(sphere);
-      dnmData->addDrawable(shape);
+      dnmData->addDrawable(sd);
     }
 
 
@@ -400,88 +366,114 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a sphere swept rectangle to the node
     ///////////////////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_SSR)
+    else if (shape->type == RCSSHAPE_SSR)
     {
-      double r  = (*s)->extents[2] / 2.0;
-      double lx = (*s)->extents[0];
-      double ly = (*s)->extents[1];
-      NLOG(5, "Adding SSR %d of \"%s\" with dimension %f %f %f",
-           shapeCount, getName().c_str(), lx, ly, 2.0 * r);
-
-      // Side 1: Front y-direction
-      osg::Capsule* cSSR1 =
-        new osg::Capsule(osg::Vec3(-lx / 2.0, 0.0, 0.0), r, ly);
-      cSSR1->setRotation(osg::Quat(osg::inDegrees(90.0f),
-                                   osg::Vec3(1.0f, 0.0f, 0.0f)));
-      osg::ShapeDrawable* sdrC1 = new osg::ShapeDrawable(cSSR1, hints.get());
-      if (_resizeable)
+      // If the shape is not resizeable, we create a nice mesh, which in
+      // wireframe mode looks a lot better than the capsule composite.
+      if (resizeable==false)
       {
+        RcsMeshData* mesh = RcsMesh_createSSR(shape->extents, 64);
+
+        // Assign vertices
+        osg::ref_ptr<osg::Vec3Array> v = new osg::Vec3Array;
+        for (unsigned int i = 0; i < mesh->nVertices; i++)
+        {
+          const double* vi = &mesh->vertices[3*i];
+          v->push_back(osg::Vec3(vi[0], vi[1], vi[2]));
+        }
+
+        // Assign index array
+        osg::ref_ptr<osg::UIntArray> f = new osg::UIntArray;
+        for (unsigned int i = 0; i < 3 * mesh->nFaces; i++)
+        {
+          f->push_back(mesh->faces[i]);
+        }
+
+        osg::ref_ptr<osg::TriangleMesh> triMesh = new osg::TriangleMesh;
+        triMesh->setDataVariance(osg::Object::DYNAMIC);
+        triMesh->setVertices(v.get());
+        triMesh->setIndices(f.get());
+
+        geode->addDrawable(new osg::ShapeDrawable(triMesh.get()));
+
+        if (shape->color != NULL)
+        {
+          setNodeMaterial(shape->color, geode.get());
+        }
+
+        RcsMesh_destroy(mesh);
+      }
+      // If the shape is resizeable, we create a capsule box composite,
+      // which we can conveniently resize if needed.
+      else
+      {
+        double r  = shape->extents[2] / 2.0;
+        double lx = shape->extents[0];
+        double ly = shape->extents[1];
+        NLOG(5, "Adding SSR %d of \"%s\" with dimension %f %f %f",
+             shapeCount, getName().c_str(), lx, ly, 2.0 * r);
+
+        // Side 1: Front y-direction
+        osg::Capsule* cSSR1 =
+          new osg::Capsule(osg::Vec3(-lx / 2.0, 0.0, 0.0), r, ly);
+        cSSR1->setRotation(osg::Quat(osg::inDegrees(90.0f),
+                                     osg::Vec3(1.0f, 0.0f, 0.0f)));
+        osg::ShapeDrawable* sdrC1 = new osg::ShapeDrawable(cSSR1, hints.get());
         sdrC1->setUseDisplayList(false);
-      }
-      geode->addDrawable(sdrC1);
+        geode->addDrawable(sdrC1);
 
-      // Side 2: Back y-direction
-      osg::Capsule* cSSR2 =
-        new osg::Capsule(osg::Vec3(lx / 2.0, 0.0, 0.0), r, ly);
-      cSSR2->setRotation(osg::Quat(osg::inDegrees(90.0f),
-                                   osg::Vec3(1.0f, 0.0f, 0.0f)));
-      osg::ShapeDrawable* sdrC2 = new osg::ShapeDrawable(cSSR2, hints.get());
-      if (_resizeable)
-      {
+        // Side 2: Back y-direction
+        osg::Capsule* cSSR2 =
+          new osg::Capsule(osg::Vec3(lx / 2.0, 0.0, 0.0), r, ly);
+        cSSR2->setRotation(osg::Quat(osg::inDegrees(90.0f),
+                                     osg::Vec3(1.0f, 0.0f, 0.0f)));
+        osg::ShapeDrawable* sdrC2 = new osg::ShapeDrawable(cSSR2, hints.get());
         sdrC2->setUseDisplayList(false);
-      }
-      geode->addDrawable(sdrC2);
+        geode->addDrawable(sdrC2);
 
-      // Side 3: Right x-direction
-      osg::Capsule* cSSR3 =
-        new osg::Capsule(osg::Vec3(0.0, ly / 2.0, 0.0), r, lx);
-      cSSR3->setRotation(osg::Quat(osg::inDegrees(90.0f),
-                                   osg::Vec3(0.0f, 1.0f, 0.0f)));
-      osg::ShapeDrawable* sdrC3 = new osg::ShapeDrawable(cSSR3, hints.get());
-      if (_resizeable)
-      {
+        // Side 3: Right x-direction
+        osg::Capsule* cSSR3 =
+          new osg::Capsule(osg::Vec3(0.0, ly / 2.0, 0.0), r, lx);
+        cSSR3->setRotation(osg::Quat(osg::inDegrees(90.0f),
+                                     osg::Vec3(0.0f, 1.0f, 0.0f)));
+        osg::ShapeDrawable* sdrC3 = new osg::ShapeDrawable(cSSR3, hints.get());
         sdrC3->setUseDisplayList(false);
-      }
-      geode->addDrawable(sdrC3);
+        geode->addDrawable(sdrC3);
 
-      // Side 4: Left x-direction
-      osg::Capsule* cSSR4 =
-        new osg::Capsule(osg::Vec3(0.0, -ly / 2.0, 0.0), r, lx);
-      cSSR4->setRotation(osg::Quat(osg::inDegrees(90.0f),
-                                   osg::Vec3(0.0f, 1.0f, 0.0f)));
-      osg::ShapeDrawable* sdrC4 = new osg::ShapeDrawable(cSSR4, hints.get());
-      if (_resizeable)
-      {
+        // Side 4: Left x-direction
+        osg::Capsule* cSSR4 =
+          new osg::Capsule(osg::Vec3(0.0, -ly / 2.0, 0.0), r, lx);
+        cSSR4->setRotation(osg::Quat(osg::inDegrees(90.0f),
+                                     osg::Vec3(0.0f, 1.0f, 0.0f)));
+        osg::ShapeDrawable* sdrC4 = new osg::ShapeDrawable(cSSR4, hints.get());
         sdrC4->setUseDisplayList(false);
-      }
-      geode->addDrawable(sdrC4);
+        geode->addDrawable(sdrC4);
 
-      // Box part
-      osg::Box* bSSR =
-        new osg::Box(osg::Vec3(0.0, 0.0, 0.0), lx, ly, 2.0 * r);
-      osg::ShapeDrawable* sdrBox = new osg::ShapeDrawable(bSSR, hints.get());
-      if (_resizeable)
-      {
+        // Box part
+        osg::Box* bSSR =
+          new osg::Box(osg::Vec3(0.0, 0.0, 0.0), lx, ly, 2.0 * r);
+        osg::ShapeDrawable* sdrBox = new osg::ShapeDrawable(bSSR, hints.get());
         sdrBox->setUseDisplayList(false);
-      }
-      geode->addDrawable(sdrBox);
+        geode->addDrawable(sdrBox);
 
-      if ((*s)->color != NULL)
-      {
-        setNodeMaterial((*s)->color, geode.get());
-      }
+        if (shape->color != NULL)
+        {
+          setNodeMaterial(shape->color, geode.get());
+        }
 
-      // Add the information for dynamic resizing
-      dnmData->addGeometry(cSSR1);
-      dnmData->addGeometry(cSSR2);
-      dnmData->addGeometry(cSSR3);
-      dnmData->addGeometry(cSSR4);
-      dnmData->addGeometry(bSSR);
-      dnmData->addDrawable(sdrC1);
-      dnmData->addDrawable(sdrC2);
-      dnmData->addDrawable(sdrC3);
-      dnmData->addDrawable(sdrC4);
-      dnmData->addDrawable(sdrBox);
+        // Add the information for dynamic resizing
+        dnmData->addGeometry(cSSR1);
+        dnmData->addGeometry(cSSR2);
+        dnmData->addGeometry(cSSR3);
+        dnmData->addGeometry(cSSR4);
+        dnmData->addGeometry(bSSR);
+        dnmData->addDrawable(sdrC1);
+        dnmData->addDrawable(sdrC2);
+        dnmData->addDrawable(sdrC3);
+        dnmData->addDrawable(sdrC4);
+        dnmData->addDrawable(sdrBox);
+      }   // resizeable
+
     }
 
 
@@ -490,27 +482,26 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a cylinder to the node
     /////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_CYLINDER)
+    else if (shape->type == RCSSHAPE_CYLINDER)
     {
       osg::Cylinder* cylinder =
-        new osg::Cylinder(osg::Vec3(0.f, 0.0f, 0.0f), (*s)->extents[0],
-                          (*s)->extents[2]);
-      osg::ShapeDrawable* shape =
-        new osg::ShapeDrawable(cylinder, hints.get());
-      if (_resizeable)
+        new osg::Cylinder(osg::Vec3(0.f, 0.0f, 0.0f), shape->extents[0],
+                          shape->extents[2]);
+      osg::ShapeDrawable* sd = new osg::ShapeDrawable(cylinder, hints.get());
+      if (resizeable)
       {
-        shape->setUseDisplayList(false);
+        sd->setUseDisplayList(false);
       }
-      geode->addDrawable(shape);
+      geode->addDrawable(sd);
 
-      if ((*s)->color != NULL)
+      if (shape->color != NULL)
       {
-        setNodeMaterial((*s)->color, geode.get());
+        setNodeMaterial(shape->color, geode.get());
       }
 
       // Add the information for dynamic resizing
       dnmData->addGeometry(cylinder);
-      dnmData->addDrawable(shape);
+      dnmData->addDrawable(sd);
     }
 
 
@@ -519,29 +510,29 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a cone to the node
     /////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_CONE)
+    else if (shape->type == RCSSHAPE_CONE)
     {
       osg::Cone* cone = new osg::Cone();
-      cone->setRadius((*s)->extents[0]);
-      cone->setHeight((*s)->extents[2]);
+      cone->setRadius(shape->extents[0]);
+      cone->setHeight(shape->extents[2]);
       // For some reason the cone shape is shifted along the z-axis by the
       // below compensated base offset value.
       cone->setCenter(osg::Vec3(0.0f, 0.0f, -cone->getBaseOffset()));
-      osg::ShapeDrawable* shape = new osg::ShapeDrawable(cone, hints.get());
-      if (_resizeable)
+      osg::ShapeDrawable* sd = new osg::ShapeDrawable(cone, hints.get());
+      if (resizeable)
       {
-        shape->setUseDisplayList(false);
+        sd->setUseDisplayList(false);
       }
-      geode->addDrawable(shape);
+      geode->addDrawable(sd);
 
-      if ((*s)->color != NULL)
+      if (shape->color != NULL)
       {
-        setNodeMaterial((*s)->color, geode.get());
+        setNodeMaterial(shape->color, geode.get());
       }
 
       // Add the information for dynamic resizing
       dnmData->addGeometry(cone);
-      dnmData->addDrawable(shape);
+      dnmData->addDrawable(sd);
     }
 
 
@@ -550,9 +541,9 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add mesh file
     /////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_MESH)
+    else if (shape->type == RCSSHAPE_MESH)
     {
-      if ((*s)->meshFile != NULL)
+      if (shape->meshFile != NULL)
       {
         osg::ref_ptr<osg::Node> meshNode;
 
@@ -567,18 +558,18 @@ osg::Switch* BodyNode::addShapes(int mask)
         _meshBufferMtx.lock();
         for (it = _meshBuffer.begin() ; it != _meshBuffer.end(); ++it)
         {
-          if (it->first == (*s)->meshFile)
+          if (it->first == shape->meshFile)
           {
-            NLOG(0, "Mesh file \"%s\" already loaded", (*s)->meshFile);
+            NLOG(0, "Mesh file \"%s\" already loaded", shape->meshFile);
             meshNode = it->second;
-            //setNodeMaterial((*s)->color, meshNode);
+            //setNodeMaterial(shape->color, meshNode);
             Rcs::MeshNode* mn = static_cast<Rcs::MeshNode*>(meshNode.get());
 
-            if ((mn != NULL) && ((*s)->color != NULL))
+            if ((mn != NULL) && (shape->color != NULL))
             {
               NLOG(0, "Setting color of body \"%s\" (%s) to \"%s\"",
-                   getName().c_str(), (*s)->meshFile, (*s)->color);
-              mn->setColor((*s)->color);
+                   getName().c_str(), shape->meshFile, shape->color);
+              mn->setMaterial(shape->color);
             }
 
             break;
@@ -593,26 +584,28 @@ osg::Switch* BodyNode::addShapes(int mask)
         bool meshFromOsgReader = false;
         if (!meshNode.valid())
         {
-          NLOG(0, "NO mesh file \"%s\" loaded", (*s)->meshFile);
-          RcsMeshData* mesh = (RcsMeshData*)(*s)->userData;
+          NLOG(0, "NO mesh file \"%s\" loaded", shape->meshFile);
+          RcsMeshData* mesh = (RcsMeshData*)shape->userData;
 
           // If there's a mesh attached to the shape, we create a MeshNode
           // from it.
           if (mesh && mesh->nFaces>0)
           {
             NLOG(0, "Creating MeshNode from shape (%s)",
-                 (*s)->meshFile ? (*s)->meshFile : "NULL");
+                 shape->meshFile ? shape->meshFile : "NULL");
 
-            meshNode = new Rcs::MeshNode(mesh->vertices, mesh->nVertices,
-                                         mesh->faces, mesh->nFaces);
-            Rcs::MeshNode* mn = static_cast<Rcs::MeshNode*>(meshNode.get());
+            Rcs::MeshNode* mn = new Rcs::MeshNode(mesh->vertices,
+                                                  mesh->nVertices,
+                                                  mesh->faces, mesh->nFaces);
 
-            if ((*s)->color != NULL)
+            if (shape->color != NULL)
             {
               NLOG(0, "Setting color of body \"%s\" (%s) to \"%s\"",
-                   getName().c_str(), (*s)->meshFile, (*s)->color);
-              mn->setColor((*s)->color);
+                   getName().c_str(), shape->meshFile, shape->color);
+              mn->setMaterial(shape->color);
             }
+
+            meshNode = mn;
           }   // (mesh && mesh->nFaces>0)
           // Otherwise, we use the OpenSceneGraph classes
           else
@@ -620,7 +613,7 @@ osg::Switch* BodyNode::addShapes(int mask)
             // fixes loading of obj without normals (doesn't work for OSG 2.8)
             osg::ref_ptr<osgDB::Options> options =
               new osgDB::Options("generateFacetNormals=true noRotation=true");
-            meshNode = osgDB::readNodeFile((*s)->meshFile, options.get());
+            meshNode = osgDB::readNodeFile(shape->meshFile, options.get());
             meshFromOsgReader = true;
 
             // We only add the non-MeshNodes to the buffer, and recreate
@@ -630,7 +623,7 @@ osg::Switch* BodyNode::addShapes(int mask)
             if (meshNode.valid())
             {
               _meshBufferMtx.lock();
-              _meshBuffer[std::string((*s)->meshFile)] = meshNode;
+              _meshBuffer[std::string(shape->meshFile)] = meshNode;
               _meshBufferMtx.unlock();
             }
           }
@@ -647,24 +640,24 @@ osg::Switch* BodyNode::addShapes(int mask)
           // with the physics simulator).
           if (meshFromOsgReader == true)
           {
-            shapeTransform->setScale(osg::Vec3((*s)->scale,
-                                               (*s)->scale,
-                                               (*s)->scale));
+            shapeTransform->setScale(osg::Vec3(shape->scale,
+                                               shape->scale,
+                                               shape->scale));
           }
-          if ((*s)->color != NULL)
+          if (shape->color != NULL)
           {
-            setNodeMaterial((*s)->color, shapeTransform);
+            setNodeMaterial(shape->color, shapeTransform);
           }
         }
         else
         {
-          RLOG(1, "Failed to generate mesh for \"%s\"", (*s)->meshFile);
+          RLOG(1, "Failed to generate mesh for \"%s\"", shape->meshFile);
         }
 
 
 
       }
-      else   // if((*s)->meshFile)
+      else   // if(shape->meshFile)
       {
         RLOG(1, "Mesh file of body \"%s\" is NULL", getName().c_str());
       }
@@ -677,13 +670,13 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a reference coordinate system to the node
     ////////////////////////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_REFFRAME)
+    else if (shape->type == RCSSHAPE_REFFRAME)
     {
       RCHECK(_refNode);
-      COSNode* cFrame = new COSNode((*s)->scale,
-                                    (*s)->extents[0],
-                                    (*s)->extents[1],
-                                    (*s)->extents[2]);
+      COSNode* cFrame = new COSNode(shape->scale,
+                                    shape->extents[0],
+                                    shape->extents[1],
+                                    shape->extents[2]);
       cFrame->setPosition(osg::Vec3(A_CB->org[0], A_CB->org[1], A_CB->org[2]));
       cFrame->setRotation(qA);
       _refNode->addChild(cFrame);
@@ -694,15 +687,15 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a torus to the node
     /////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_TORUS)
+    else if (shape->type == RCSSHAPE_TORUS)
     {
-      TorusNode* torus = new TorusNode((*s)->extents[0], (*s)->extents[2]);
+      TorusNode* torus = new TorusNode(shape->extents[0], shape->extents[2]);
 
       shapeTransform->addChild(torus);
 
-      if ((*s)->color != NULL)
+      if (shape->color != NULL)
       {
-        setNodeMaterial((*s)->color, shapeTransform);
+        setNodeMaterial(shape->color, shapeTransform);
       }
     }
 
@@ -711,17 +704,17 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a octree to the node
     /////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_OCTREE)
+    else if (shape->type == RCSSHAPE_OCTREE)
     {
 #ifdef USE_OCTOMAP
       octomap::OcTree* tree;
-      if ((*s)->userData == NULL && (*s)->meshFile)
+      if (shape->userData == NULL && shape->meshFile)
       {
-        tree = new octomap::OcTree((*s)->meshFile);
+        tree = new octomap::OcTree(shape->meshFile);
       }
       else
       {
-        tree = reinterpret_cast<octomap::OcTree*>((*s)->userData);
+        tree = reinterpret_cast<octomap::OcTree*>(shape->userData);
       }
 
       if (tree)
@@ -733,15 +726,15 @@ osg::Switch* BodyNode::addShapes(int mask)
         // color
         RcsMaterialData* material = NULL;
 
-        if ((*s)->color != NULL)
+        if (shape->color != NULL)
         {
-          material = getMaterial((*s)->color);
+          material = getMaterial(shape->color);
         }
 
         if (material == NULL)
         {
           RLOG(5, "Failed to set color \"%s\"",
-               (*s)->color ? (*s)->color : "NULL");
+               shape->color ? shape->color : "NULL");
         }
         else
         {
@@ -762,51 +755,51 @@ osg::Switch* BodyNode::addShapes(int mask)
     // Add a point to the shapeNode
     /////////////////////////////////
 
-    else if ((*s)->type == RCSSHAPE_POINT)
+    else if (shape->type == RCSSHAPE_POINT)
     {
       NLOG(5, "Adding point %d of \"%s\" with radius %f",
-           shapeCount, getName().c_str(), (*s)->r);
+           shapeCount, getName().c_str(), shape->r);
       osg::Sphere* sphere =
         new osg::Sphere(osg::Vec3(0.0, 0.0, 0.0), 0.005);
-      osg::ShapeDrawable* shape = new osg::ShapeDrawable(sphere, hints.get());
-      if (_resizeable)
+      osg::ShapeDrawable* sd = new osg::ShapeDrawable(sphere, hints.get());
+      if (resizeable)
       {
-        shape->setUseDisplayList(false);
+        sd->setUseDisplayList(false);
       }
-      geode->addDrawable(shape);
+      geode->addDrawable(sd);
 
-      if ((*s)->color != NULL)
+      if (shape->color != NULL)
       {
-        setNodeMaterial((*s)->color, geode.get());
+        setNodeMaterial(shape->color, geode.get());
       }
 
       // Add the information for dynamic resizing
       dnmData->addGeometry(sphere);
-      dnmData->addDrawable(shape);
+      dnmData->addDrawable(sd);
     }
 
-    else if ((*s)->type == RCSSHAPE_MARKER)
+    else if (shape->type == RCSSHAPE_MARKER)
     {
       NLOG(5, "Adding marker %d id %d of \"%s\" with length %f ", shapeCount,
-           *((int*)(*s)->userData), getName().c_str(), (*s)->extents[2]);
+           *((int*)shape->userData), getName().c_str(), shape->extents[2]);
       osg::Box* box =
         new osg::Box(osg::Vec3(0.0, 0.0, 0.0),
-                     (*s)->extents[2], (*s)->extents[2], 0.001);
-      osg::ShapeDrawable* shape = new osg::ShapeDrawable(box, hints.get());
-      if (_resizeable)
+                     shape->extents[2], shape->extents[2], 0.001);
+      osg::ShapeDrawable* sd = new osg::ShapeDrawable(box, hints.get());
+      if (resizeable)
       {
-        shape->setUseDisplayList(false);
+        sd->setUseDisplayList(false);
       }
-      geode->addDrawable(shape);
+      geode->addDrawable(sd);
 
-      if ((*s)->color != NULL)
+      if (shape->color != NULL)
       {
-        setNodeMaterial((*s)->color, geode.get());
+        setNodeMaterial(shape->color, geode.get());
       }
 
       // Add the information for dynamic resizing
       dnmData->addGeometry(box);
-      dnmData->addDrawable(shape);
+      dnmData->addDrawable(sd);
     }
 
     ////////////////////////
@@ -814,14 +807,14 @@ osg::Switch* BodyNode::addShapes(int mask)
     ////////////////////////
     else
     {
-      RLOG(1, "Shape type %d of body \"%s\" undefined", (*s)->type,
+      RLOG(1, "Shape type %d of body \"%s\" undefined", shape->type,
            getName().c_str());
     }
 
 
 
     // read the texture file
-    if ((*s)->textureFile)
+    if (shape->textureFile)
     {
       osg::ref_ptr<osg::Texture2D> texture;
 
@@ -834,10 +827,10 @@ osg::Switch* BodyNode::addShapes(int mask)
       _textureBufferMtx.lock();
       for (it = _textureBuffer.begin() ; it != _textureBuffer.end(); ++it)
       {
-        if (it->first == (*s)->textureFile)
+        if (it->first == shape->textureFile)
         {
           NLOG(0, "Texture file \"%s\" already loaded",
-               (*s)->textureFile);
+               shape->textureFile);
           texture = it->second;
           break;
 
@@ -852,12 +845,12 @@ osg::Switch* BodyNode::addShapes(int mask)
 
         // load an image by reading a file:
         osg::ref_ptr<osg::Image> texture_image =
-          osgDB::readImageFile((*s)->textureFile);
+          osgDB::readImageFile(shape->textureFile);
 
         if (texture_image.valid() == false)
         {
           RLOG(1, "couldn't load texture file  \"%s\" for body \"%s\", "
-               "omitting...", (*s)->textureFile, getName().c_str());
+               "omitting...", shape->textureFile, getName().c_str());
         }
         else
         {
@@ -873,7 +866,7 @@ osg::Switch* BodyNode::addShapes(int mask)
           // Assign the texture to the image we read from file
           texture->setImage(texture_image.get());
           _textureBufferMtx.lock();
-          _textureBuffer[std::string((*s)->textureFile)] = texture;
+          _textureBuffer[std::string(shape->textureFile)] = texture;
           _textureBufferMtx.unlock();
         }
       }
@@ -897,7 +890,9 @@ osg::Switch* BodyNode::addShapes(int mask)
           state_set->setAttributeAndModes(material,
                                           osg::StateAttribute::OVERRIDE |
                                           osg::StateAttribute::ON);
-          state_set->setTextureAttributeAndModes(0, texture.get(), osg::StateAttribute::OVERRIDE | osg::StateAttribute::ON);
+          state_set->setTextureAttributeAndModes(0, texture.get(),
+                                                 osg::StateAttribute::OVERRIDE |
+                                                 osg::StateAttribute::ON);
         }
         //      // Create a new StateSet with default settings
         //      // this means the old color settings are overridden
@@ -997,44 +992,45 @@ osg::Switch* BodyNode::addDebugInformation()
   // Add a small cylinder for each joint
   RCSBODY_TRAVERSE_JOINTS(this->bdy)
   {
-    if (JNT->type == RCSJOINT_ROT_X ||
-        JNT->type == RCSJOINT_ROT_Y ||
-        JNT->type == RCSJOINT_ROT_Z)
+    if (!RcsJoint_isRotation(JNT))
     {
-      // Transfomation of Joint
-      osg::PositionAttitudeTransform* joint_transform =
-        new osg::PositionAttitudeTransform;
-      osg::Geode* joint_geode = new osg::Geode();
-
-      switch (JNT->type)
-      {
-        case RCSJOINT_ROT_X:
-        {
-          osg::Quat qA(M_PI_2, osg::Vec3d(0.0, 1.0, 0.0));
-          joint_transform->setAttitude(qA);
-          break;
-        }
-        case RCSJOINT_ROT_Y:
-        {
-          osg::Quat qA(M_PI_2, osg::Vec3d(1.0, 0.0, 0.0));
-          joint_transform->setAttitude(qA);
-          break;
-        }
-      }
-
-      debugNode->addChild(joint_transform);
-      joint_transform->addChild(joint_geode);
-
-      // Cylinder for joint
-      osg::Cylinder* cylinder =
-        new osg::Cylinder(osg::Vec3(0.0, 0.0, 0.0), 0.005, 0.04);
-
-      osg::ShapeDrawable* shape = new osg::ShapeDrawable(cylinder, hints.get());
-
-      joint_geode->addDrawable(shape);
-      setNodeMaterial("GREEN", joint_geode);
+      continue;
     }
-  }
+
+    // Transfomation of Joint
+    osg::PositionAttitudeTransform* joint_transform =
+      new osg::PositionAttitudeTransform;
+    osg::Geode* joint_geode = new osg::Geode();
+
+    switch (JNT->type)
+    {
+      case RCSJOINT_ROT_X:
+      {
+        osg::Quat qA(M_PI_2, osg::Vec3d(0.0, 1.0, 0.0));
+        joint_transform->setAttitude(qA);
+        break;
+      }
+      case RCSJOINT_ROT_Y:
+      {
+        osg::Quat qA(M_PI_2, osg::Vec3d(1.0, 0.0, 0.0));
+        joint_transform->setAttitude(qA);
+        break;
+      }
+    }
+
+    debugNode->addChild(joint_transform);
+    joint_transform->addChild(joint_geode);
+
+    // Cylinder for joint
+    osg::Cylinder* cylinder =
+      new osg::Cylinder(osg::Vec3(0.0, 0.0, 0.0), 0.005, 0.04);
+
+    osg::ShapeDrawable* shape = new osg::ShapeDrawable(cylinder, hints.get());
+
+    joint_geode->addDrawable(shape);
+    setNodeMaterial("GREEN", joint_geode);
+
+  }   // RCSBODY_TRAVERSE_JOINTS(this->bdy)
 
   if (this->bdy->parent)
   {
@@ -1428,10 +1424,6 @@ void BodyNode::setTransformPtr(const HTr* A_BI_)
  ******************************************************************************/
 void BodyNode::hide()
 {
-  //_refNode->setAllChildrenOff();
-  //_collisionNode->setAllChildrenOff();
-  //_graphicsNode->setAllChildrenOff();
-  //_physicsNode->setAllChildrenOff();
   _nodeSwitch->setAllChildrenOff();
 }
 
@@ -1457,6 +1449,23 @@ void BodyNode::setVisibility(bool visible)
     hide();
   }
 }
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void BodyNode::setDynamicMeshUpdate(bool enabled)
+{
+  this->dynamicMeshUpdate = enabled;
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+bool BodyNode::getDynamicMeshUpdate() const
+{
+  return this->dynamicMeshUpdate;
+}
+
 /*******************************************************************************
  * See header.
  ******************************************************************************/
@@ -1477,7 +1486,8 @@ void BodyNode::setGhostMode(bool enabled, const std::string& matname)
         material->setAmbient(osg::Material::FRONT_AND_BACK, matDataPtr->amb);
         material->setDiffuse(osg::Material::FRONT_AND_BACK, matDataPtr->diff);
         material->setSpecular(osg::Material::FRONT_AND_BACK, matDataPtr->spec);
-        material->setShininess(osg::Material::FRONT_AND_BACK, matDataPtr->shininess);
+        material->setShininess(osg::Material::FRONT_AND_BACK,
+                               matDataPtr->shininess);
       }
       else
       {
@@ -1702,6 +1712,89 @@ void BodyNode::updateDynamicShapes()
 
 }
 
+/*******************************************************************************
+ * For soft physics etc.
+ ******************************************************************************/
+void BodyNode::updateDynamicMeshes()
+{
+  RCSBODY_TRAVERSE_SHAPES(body())
+  {
+    if ((SHAPE->computeType & RCSSHAPE_COMPUTE_SOFTPHYSICS) == 0)
+    {
+      continue;
+    }
+
+    RcsMeshData* meshDat = (RcsMeshData*) SHAPE->userData;
+
+    if (meshDat == NULL)
+    {
+      RLOG(1, "Body \"%s\" has mesh shape without RcsMeshData", body()->name);
+      continue;
+    }
+
+    std::vector<MeshNode*> m = findChildrenOfType<MeshNode>(_physicsNode.get());
+
+    for (size_t i=0; i<m.size(); ++i)
+    {
+      RLOG_CPP(6, "Updating mesh " << i+1 << " from " << m.size() << " with "
+               << meshDat->nVertices << " vertices and " << meshDat->nFaces
+               << " faces : " << getName());
+      m[i]->setMesh(meshDat->vertices, meshDat->nVertices,
+                    meshDat->faces, meshDat->nFaces);
+    }
+
+  }   // RCSBODY_TRAVERSE_SHAPES(body())
+}
+
+/*******************************************************************************
+ * Called from node callback
+ ******************************************************************************/
+void BodyNode::updateCallback(osg::Node* node, osg::NodeVisitor* nv)
+{
+  const HTr* A = getTransformPtr();
+
+  if (!HTr_isValid(A))
+  {
+    RLOG(3, "Body \"%s\" has invalid transformation - skipping update",
+         getName().c_str());
+    REXEC(4)
+    {
+      Mat3d_print((double(*)[3])A->rot);
+    }
+    return;
+  }
+
+  // Set the nodes transform
+  setTransformation(A);
+
+  // Update debug lines
+  if ((body()->parent) && (_debugLine.valid()))
+  {
+    _debugLine->clear();
+
+    // Add the two body positions in local reference
+    HTr A_12;
+    HTr_invTransform(&A_12, body()->A_BI, body()->parent->A_BI);
+
+    _debugLine->push_back(osg::Vec3(0.0, 0.0, 0.0));
+    _debugLine->push_back(osg::Vec3(A_12.org[0], A_12.org[1], A_12.org[2]));
+
+    osg::DrawArrays* ps =
+      ((osg::DrawArrays*)(_debugLineGeometry)->getPrimitiveSet(0));
+    ps->setCount(_debugLine->size());
+    _debugLineGeometry->setVertexArray(_debugLine.get());
+    _debugLineGeometry->setPrimitiveSet(0, ps);
+  }
+
+  // Change the geometry according to the bodies shapes
+  updateDynamicShapes();
+
+  // Mesh dynamic update
+  if (getDynamicMeshUpdate())
+  {
+    updateDynamicMeshes();
+  }
+}
 
 
 }   // namespace Rcs

@@ -63,10 +63,13 @@ Rcs::CompositeTask::CompositeTask(const Rcs::CompositeTask& copyFromMe,
                                   RcsGraph* newGraph):
   Task(copyFromMe, newGraph)
 {
+  // The addTask method assigns the parameter list, so we need to delete it
+  // before going trough te sub tasks.
+  clearParameters();
 
   for (size_t i=0; i<copyFromMe.subTask.size(); ++i)
   {
-    this->subTask.push_back(copyFromMe.subTask[i]->clone(newGraph));
+    addTask(copyFromMe.subTask[i]->clone(newGraph));
   }
 }
 
@@ -106,38 +109,27 @@ void Rcs::CompositeTask::addTask(Task* tsk)
   this->subTask.push_back(tsk);
 
   // Update the Task's private taskDim member.
-  setDim(getDim());
+  unsigned int compositeDim = 0;
+
+  for (size_t i=0; i<subTask.size(); ++i)
+  {
+    compositeDim += subTask[i]->getDim();
+  }
+
+  setDim(compositeDim);
 
   // Add a parameter class instance for each sub-task. This is required since
   // the parents constructor is called with dimension 0 (We can't know it at
   // that point), and therefore doesn't create the parameter class instances
   // in the CompositeTask's constructor.
-  std::vector<Rcs::Task::Parameters*>& paramVec = getParameters();
 
   // Copy the parameters of the subtasks to the CompositeTask so that they will
   // be properly displayed in the Guis etc.
   for (size_t j=0; j<tsk->getParameters().size(); ++j)
   {
-    Parameters* p = tsk->getParameter(j);
-    paramVec.push_back(new Task::Parameters(p->minVal, p->maxVal,
-                                            p->scale_factor, p->name));
+    addParameter(tsk->getParameter(j));
   }
 
-}
-
-/*******************************************************************************
- * Return the dimension as the sum of all subtask's dimensions
- ******************************************************************************/
-unsigned int Rcs::CompositeTask::getDim() const
-{
-  unsigned int dim = 0;
-
-  for (size_t i=0; i<subTask.size(); ++i)
-  {
-    dim += subTask[i]->getDim();
-  }
-
-  return dim;
 }
 
 /*******************************************************************************
@@ -365,6 +357,14 @@ const Rcs::Task* Rcs::CompositeTask::getSubTask(size_t index) const
 /*******************************************************************************
  *
  ******************************************************************************/
+Rcs::Task* Rcs::CompositeTask::getSubTask(size_t index)
+{
+  return this->subTask[index];
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
 void Rcs::CompositeTask::print() const
 {
   printf("CompositeTask %s: type %s\n",
@@ -375,4 +375,12 @@ void Rcs::CompositeTask::print() const
     printf("   Sub-task %zd: ", i);
     subTask[i]->print();
   }
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+size_t Rcs::CompositeTask::getNumberOfTasks() const
+{
+  return this->subTask.size();
 }

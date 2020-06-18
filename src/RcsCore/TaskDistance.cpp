@@ -41,7 +41,6 @@
 #include "Rcs_parser.h"
 #include "Rcs_body.h"
 #include "Rcs_Vec3d.h"
-#include "Rcs_kinematics.h"
 
 
 static Rcs::TaskFactoryRegistrar<Rcs::TaskDistance> registrar1("Distance");
@@ -54,9 +53,20 @@ Rcs::TaskDistance::TaskDistance(const std::string& className_,
                                 xmlNode* node,
                                 RcsGraph* _graph,
                                 int dim):
-  TaskGenericIK(className_, node, _graph, dim)
+  TaskGenericIK(className_, node, _graph, dim), gainDX(1.0)
 {
-  getParameter(0)->name.assign("Distance [m]");
+  if (getClassName()=="Distance")
+  {
+    double guiMax = 1.0, guiMin = -1.0;
+    getXMLNodePropertyDouble(node, "guiMax", &guiMax);
+    getXMLNodePropertyDouble(node, "guiMin", &guiMin);
+    resetParameter(Parameters(guiMin, guiMax, 1.0, "Distance [m]"));
+  }
+
+  // The gainDX scales the position error coming out of computeDX. It is
+  // sometimes needed to scale it down to avoid jitter due to the contact
+  // normal updates.
+  getXMLNodePropertyDouble(node, "gainDX", &this->gainDX);
 }
 
 /*******************************************************************************
@@ -64,29 +74,37 @@ Rcs::TaskDistance::TaskDistance(const std::string& className_,
  ******************************************************************************/
 Rcs::TaskDistance::TaskDistance(const TaskDistance& copyFromMe,
                                 RcsGraph* newGraph):
-  TaskGenericIK(copyFromMe, newGraph)
+  TaskGenericIK(copyFromMe, newGraph),
+  gainDX(copyFromMe.gainDX)
 {
 }
 
 /*******************************************************************************
  * Constructor based on body pointers
  ******************************************************************************/
-//! \todo Memory leak when derieved class calls params.clear()
 Rcs::TaskDistance::TaskDistance(RcsGraph* graph_,
                                 const RcsBody* effector,
-                                const RcsBody* refBdy) : TaskGenericIK()
+                                const RcsBody* refBdy) :
+  TaskGenericIK(), gainDX(1.0)
+
 {
+  int nQueries = RcsBody_getNumDistanceQueries(effector, refBdy);
+  RCHECK(graph_);
+  RCHECK(effector);
+  RCHECK(refBdy);
+  RCHECK_MSG(nQueries>0, "The body pair %s - %s has no distance query. Did "
+             "you include any shape with enabled distance flag?",
+             effector->name, refBdy->name);
+
   this->graph = graph_;
   setClassName("Distance");
   setName("Distance " + std::string(effector ? effector->name : "NULL") + "-"
-          + std::string(refBdy ? refBdy->name : NULL));
+          + std::string(refBdy ? refBdy->name : "NULL"));
   setEffector(effector);
   setRefBody(refBdy);
   setRefFrame(refFrame ? refFrame : refBdy);
   setDim(1);
-  std::vector<Parameters*>& params = getParameters();
-  params.clear();
-  params.push_back(new Task::Parameters(-1.0, 1.0, 1.0, "Distance [m]"));
+  resetParameter(Parameters(-1.0, 1.0, 1.0, "Distance [m]"));
 }
 
 /*******************************************************************************
@@ -115,13 +133,23 @@ void Rcs::TaskDistance::computeX(double* x_res) const
 /*******************************************************************************
  *
  ******************************************************************************/
+void Rcs::TaskDistance::computeDX(double* dx_ik,
+                                  const double* x_des,
+                                  const double* x_curr) const
+{
+  TaskGenericIK::computeDX(dx_ik, x_des, x_curr);
+  dx_ik[0] *= gainDX;
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
 void Rcs::TaskDistance::computeJ(MatNd* jacobian) const
 {
   double cpEf[3], cpRef[3], nRE[3];
   RcsBody_distance(this->refBody, this->ef, cpRef, cpEf, nRE);
   RcsBody_distanceGradient(graph, this->refBody, this->ef, true,
                            cpRef, cpEf, nRE, jacobian);
-  MatNd_reshape(jacobian, 1, graph->nJ); // \todo(MG): Fix in RcsBody_distanceGradient() function
 }
 
 /*******************************************************************************
@@ -150,26 +178,44 @@ bool Rcs::TaskDistance::testHessian(bool verbose)
  ******************************************************************************/
 bool Rcs::TaskDistance::isValid(xmlNode* node, const RcsGraph* graph)
 {
-  std::vector<std::string> classNameVec;
-  classNameVec.push_back(std::string("Distance"));
+  bool success = Rcs::Task::isValid(node, graph, "Distance");
+  success = Rcs::TaskDistance::hasDistanceFunction(node, graph) && success;
 
-  bool success = Rcs::Task::isValid(node, graph, classNameVec);
+  return success;
+}
 
+/*******************************************************************************
+ *
+ ******************************************************************************/
+bool Rcs::TaskDistance::hasDistanceFunction(xmlNode* node,
+                                            const RcsGraph* graph)
+{
+  bool success = true;
   char taskName[256] = "Unnamed task";
   getXMLNodePropertyStringN(node, "name", taskName, 256);
 
-  // This task requires an effector and a reference body
-  if (getXMLNodeProperty(node, "effector")==false)
+  // Check if there is a distance function called between effector and refBdy
+  char name1[265] = "", name2[265] = "";
+  getXMLNodePropertyStringN(node, "effector", name1, 256);
+  getXMLNodePropertyStringN(node, "refBdy", name2, 256);
+  getXMLNodePropertyStringN(node, "refBody", name2, 256);
+  const RcsBody* b1 = RcsGraph_getBodyByName(graph, name1);
+  const RcsBody* b2 = RcsGraph_getBodyByName(graph, name2);
+
+  if (b1 == NULL)
   {
-    RLOG(3, "Task \"%s\" requires \"effector\", none found", taskName);
+    RLOG(1, "Effector \"%s\" of task \"%s\" doesn't exist!", name1, taskName);
     success = false;
   }
-
-  if ((getXMLNodeProperty(node, "refBdy")==false) &&
-      (getXMLNodeProperty(node, "refBody")==false))
+  else if (b2 == NULL)
   {
-    RLOG(3, "Task \"%s\" requires \"refBdy\" or \"refBody\", none found",
-         taskName);
+    RLOG(1, "Ref-body \"%s\" of task \"%s\" doesn't exist!", name2, taskName);
+    success = false;
+  }
+  else if (RcsBody_getNumDistanceQueries(b1, b2) == 0)
+  {
+    RLOG(1, "Task \"%s\": No distance function between \"%s\" and \"%s\"!",
+         taskName, name1, name2);
     success = false;
   }
 

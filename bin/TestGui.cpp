@@ -126,15 +126,15 @@ int main(int argc, char** argv)
 
       MatNd* mat = MatNd_create(rows,cols);
       MatNd_setRandom(mat, -1.0, 1.0);
-      MatNdWidget::create(mat, NULL, mtx);
+      Rcs::MatNdWidget::create(mat, NULL, mtx);
 
       while (runLoop==true)
-        {
-          pthread_mutex_lock(&graphLock);
-          MatNd_printCommentDigits("mat", mat, 4);
-          pthread_mutex_unlock(&graphLock);
-          Timer_usleep(1000);
-        }
+      {
+        pthread_mutex_lock(&graphLock);
+        MatNd_printCommentDigits("mat", mat, 4);
+        pthread_mutex_unlock(&graphLock);
+        Timer_usleep(1000);
+      }
 
       MatNd_destroy(mat);
       break;

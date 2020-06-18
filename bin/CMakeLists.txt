@@ -16,7 +16,7 @@ IF(NOT HEADLESS_BUILD)
   TARGET_LINK_LIBRARIES(Rcs RcsCore RcsGui RcsGraphics RcsPhysics)
 
   ADD_EXECUTABLE(TestGraphics TestGraphics.cpp)
-  TARGET_LINK_LIBRARIES(TestGraphics RcsGraphics)
+  TARGET_LINK_LIBRARIES(TestGraphics RcsGraphics RcsGui)
 
   ADD_EXECUTABLE(TestGui TestGui.cpp)
   TARGET_LINK_LIBRARIES(TestGui RcsGui)
@@ -24,7 +24,10 @@ IF(NOT HEADLESS_BUILD)
   ADD_EXECUTABLE(TestOrientations TestOrientations.cpp)
   TARGET_LINK_LIBRARIES(TestOrientations RcsCore RcsGui RcsGraphics)
 
-  # Install the binaries (excluding the tests)
-  INSTALL(TARGETS Rcs RUNTIME DESTINATION bin LIBRARY DESTINATION lib)
+  ADD_EXECUTABLE(TestGeometry TestGeometry.cpp)
+  TARGET_LINK_LIBRARIES(TestGeometry RcsCore RcsGui RcsGraphics RcsPhysics)
+
+  # Install the binaries
+  INSTALL(TARGETS TestCore TestMath TestGraph Rcs TestGraphics TestGui TestOrientations TestGeometry RUNTIME DESTINATION bin/${PLATFORM_INSTALL_DIR} LIBRARY DESTINATION lib/${PLATFORM_INSTALL_DIR})
 
 ENDIF(NOT HEADLESS_BUILD)

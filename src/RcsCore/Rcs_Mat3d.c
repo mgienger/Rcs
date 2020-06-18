@@ -907,9 +907,8 @@ void Mat3d_rotateOmegaSelf(double A_KI[3][3], const double omega[3],
 /*******************************************************************************
  * See header.
  ******************************************************************************/
-//! \todo Really exit hard?
 double Mat3d_getMinimumRotationAngle(double A_SI[3][3], double A_TI[3][3],
-                                     double axis[3])
+                                     const double axis[3])
 {
   // Compute relative transformation from x to mean of distribution
   double A_TS[3][3];
@@ -931,7 +930,7 @@ double Mat3d_getMinimumRotationAngle(double A_SI[3][3], double A_TI[3][3],
 
   // Compute minimum angle
   double t = atan2(t1, t0);
-  RCHECK(Math_isFinite(t));
+
   return t;
 }
 
@@ -1454,15 +1453,15 @@ void Mat3d_slerp(double A[3][3], double A_1I[3][3], double A_2I[3][3],
  * See header.
  ******************************************************************************/
 double Mat3d_clip(double A_clipped[3][3], double A_from[3][3], double A_to[3][3],
-                double maxAngle)
+                  double maxAngle)
 {
   const double phi = Mat3d_diffAngle(A_from, A_to);
 
   if (phi <= maxAngle)
-    {
-      Mat3d_copy(A_clipped, A_to);
-      return 1.0;
-    }
+  {
+    Mat3d_copy(A_clipped, A_to);
+    return 1.0;
+  }
 
   // Compute orientation error e
   double e[3], A_err[3][3];

@@ -36,6 +36,7 @@
 
 #include "BulletRigidBody.h"
 #include "BulletHingeJoint.h"
+#include "BulletSliderJoint.h"
 #include "BulletHelpers.h"
 
 #include <Rcs_typedef.h>
@@ -45,6 +46,7 @@
 #include <Rcs_body.h>
 #include <Rcs_shape.h>
 #include <Rcs_utils.h>
+#include <Rcs_parser.h>
 
 #include <BulletCollision/CollisionShapes/btShapeHull.h>
 #include <LinearMath/btGeometryUtil.h>
@@ -70,7 +72,8 @@ static void setMargin(btCollisionShape* shape)
 //! \todo Check margins
 btCollisionShape* Rcs::BulletRigidBody::createShape(RcsShape* sh,
                                                     btTransform& relTrans,
-                                                    const RcsBody* body)
+                                                    const RcsBody* body,
+                                                    unsigned int convexHullVertexLimit)
 {
   btCollisionShape* bShape = NULL;
 
@@ -141,7 +144,7 @@ btCollisionShape* Rcs::BulletRigidBody::createShape(RcsShape* sh,
                         btScalar(0.5*sh->extents[2]));
       bShape = new btCylinderShapeZ(halfExt);
       setMargin(bShape);
-      break;
+     break;
     }
 
     case RCSSHAPE_BOX:
@@ -236,10 +239,10 @@ btCollisionShape* Rcs::BulletRigidBody::createShape(RcsShape* sh,
       }
 
       // If the mesh is large, we compress it.
-      if (mesh->nVertices>MAX_VERTICES_WITHOUT_COMPRESSION)
+      if (mesh->nVertices>convexHullVertexLimit)
       {
-        RLOG(5, "[%s]: Compressing mesh with %u vertices",
-             body->name, mesh->nVertices);
+        RLOG(5, "[%s]: Compressing mesh with %u vertices (limit: %u)",
+             body->name, mesh->nVertices, convexHullVertexLimit);
         btConvexHullShape* hull = meshToCompressedHull(mesh);
         sh->userData = hullToMesh(hull);   // and link the compressed one
 
@@ -253,7 +256,7 @@ btCollisionShape* Rcs::BulletRigidBody::createShape(RcsShape* sh,
         }
         bShape = hull;
       }
-      else // If the mesh has 100 vertices or less, use it like it is
+      else // If convexHullVertexLimit vertices or less, use it like it is
       {
         bShape = meshToHull(mesh);
       }
@@ -297,13 +300,42 @@ Rcs::BulletRigidBody* Rcs::BulletRigidBody::create(const RcsBody* bdy,
     return NULL;
   }
 
+  // Read number of vertices limit to be compressed into convex hull
+  RCHECK(config);
+  unsigned int convexHullVertexLimit = MAX_VERTICES_WITHOUT_COMPRESSION;
+  xmlNodePtr bulletParams = getXMLChildByName(config->getXMLRootNode(),
+                                              "bullet_parameters");
+  if (bulletParams == NULL)
+  {
+    RLOG(1, "Physics configuration file %s did not contain a "
+         "\"bullet parameters\" node!", config->getConfigFileName());
+  }
+  else
+  {
+    getXMLNodePropertyUnsignedInt(bulletParams, "convex_hull_vertex_limit",
+                                  &convexHullVertexLimit);
+  }
+
+
+
+
 
   // Traverse through shapes
   RcsShape** sPtr = &bdy->shape[0];
   btCompoundShape* cSh = new btCompoundShape();
   const char* materialName = NULL;
+  bool hasSoftShape = false;
+
   while (*sPtr)
   {
+
+    if (((*sPtr)->computeType & RCSSHAPE_COMPUTE_SOFTPHYSICS) != 0)
+    {
+      RLOG(5, "Skipping soft shape %s", RcsShape_name((*sPtr)->type));
+      hasSoftShape = true;
+      sPtr++;
+      continue;
+    }
 
     if (((*sPtr)->computeType & RCSSHAPE_COMPUTE_PHYSICS) == 0)
     {
@@ -315,7 +347,8 @@ Rcs::BulletRigidBody* Rcs::BulletRigidBody::create(const RcsBody* bdy,
     RLOG(5, "Creating shape %s", RcsShape_name((*sPtr)->type));
 
     btTransform relTrans;
-    btCollisionShape* shape = createShape(*sPtr, relTrans, bdy);
+    btCollisionShape* shape = createShape(*sPtr, relTrans, bdy,
+                                          convexHullVertexLimit);
 
     if (shape != NULL)
     {
@@ -341,7 +374,11 @@ Rcs::BulletRigidBody* Rcs::BulletRigidBody::create(const RcsBody* bdy,
 
   if (cSh->getNumChildShapes() == 0)
   {
-    RLOG(1, "Body %s: Compound shape has 0 bodies", bdy->name);
+    if (!hasSoftShape)
+    {
+      RLOG(1, "Body %s: Compound shape has 0 bodies", bdy->name);
+    }
+
     delete cSh;
     return NULL;
   }
@@ -427,10 +464,9 @@ Rcs::BulletRigidBody* Rcs::BulletRigidBody::create(const RcsBody* bdy,
   }
 
   // apply material properties
-  RCHECK(config);
   RCHECK(materialName);
   const PhysicsMaterial material = config->getMaterial(materialName);
-  RCHECK(material);
+
   btBody->setFriction(material.getFrictionCoefficient());
   btBody->setRollingFriction(material.getRollingFrictionCoefficient());
   //btBody->setSpinningFriction(0.1);
@@ -496,7 +532,7 @@ const char* Rcs::BulletRigidBody::getBodyName() const
 void Rcs::BulletRigidBody::calcHingeTrans(const RcsJoint* jnt,
                                           btVector3& pivot, btVector3& axis)
 {
-  HTr A_PI;   // Rotation from COM to world: A_PI = A_PB*A_BI
+  HTr A_PI;   // Rotation from world to COM: A_PI = A_PB*A_BI
   Mat3d_mul(A_PI.rot, this->A_PB_.rot, body->A_BI->rot);
 
   double I_r_com[3];
@@ -518,6 +554,44 @@ void Rcs::BulletRigidBody::calcHingeTrans(const RcsJoint* jnt,
     axis[i] = A_JP.rot[jnt->dirIdx][i];
   }
 
+}
+
+/*******************************************************************************
+ * Calculate slider transformation in Bullet body coordinates. We calculate it
+ * using the absoulte transforms of the bodies. They must be consistent, which
+ * means that the forward kinematics must have been calculated at least once
+ * before calling this function.
+ ******************************************************************************/
+btTransform Rcs::BulletRigidBody::calcSliderTrans(const RcsJoint* jnt)
+{
+  HTr A_PI;   // Rotation from world to COM: A_PI = A_PB*A_BI
+  Mat3d_mul(A_PI.rot, this->A_PB_.rot, body->A_BI->rot);
+
+  double I_r_com[3];
+  Vec3d_transRotate(I_r_com, body->A_BI->rot, body->Inertia->org);
+  Vec3d_add(A_PI.org, body->A_BI->org, I_r_com);
+
+  // Transformation from physics body to joint in physics coordinates
+  HTr A_JP;   // A_JP = A_JI*A_IP
+  RcsJoint* seppl = (RcsJoint*) jnt;
+  Mat3d_mulTranspose(A_JP.rot, seppl->A_JI.rot, A_PI.rot);
+
+  Vec3d_sub(A_JP.org, jnt->A_JI.org, A_PI.org);
+  Vec3d_rotateSelf(A_JP.org, A_PI.rot);
+
+
+  int dirIdx = RcsJoint_getDirectionIndex(jnt);
+
+  if (dirIdx==1)
+  {
+    Mat3d_rotateSelfAboutXYZAxis(A_JP.rot, 2, M_PI_2);
+  }
+  else if (dirIdx==2)
+  {
+    Mat3d_rotateSelfAboutXYZAxis(A_JP.rot, 1, -M_PI_2);
+  }
+
+  return btTransformFromHTr(&A_JP);
 }
 
 /*******************************************************************************
@@ -614,31 +688,37 @@ btTypedConstraint* Rcs::BulletRigidBody::createJoint(const RcsGraph* graph)
     return NULL;
   }
 
-  if (RcsJoint_isRotation(body->jnt)==false)
-  {
-    RLOG(1, "Skipping joint: found 1 non-revolute joint in body %s",
-         getBodyName());
-
-    // std::vector<bool> cMask = rbjMask(body);
-    // setLinearFactor(btVector3(cMask[0], cMask[1], cMask[2]));
-    // setAngularFactor(btVector3(cMask[3], cMask[4], cMask[5]));
-
-    return NULL;
-  }
+  btTypedConstraint* joint = NULL;
 
   // Create hinge joint
-  btVector3 pivotInA, pivotInB, axisInA, axisInB;
-  bool useReferenceFrameA = false;
+  if (RcsJoint_isRotation(body->jnt))
+  {
+    btVector3 pivotInA, pivotInB, axisInA, axisInB;
+    bool useReferenceFrameA = false;
 
-  calcHingeTrans(body->jnt, pivotInA, axisInA);
-  parent->calcHingeTrans(body->jnt, pivotInB, axisInB);
+    calcHingeTrans(body->jnt, pivotInA, axisInA);
+    parent->calcHingeTrans(body->jnt, pivotInB, axisInB);
 
-  BulletHingeJoint* hinge =
-    new BulletHingeJoint(body->jnt, graph->q->ele[body->jnt->jointIndex],
-                         *this, *parent, pivotInA, pivotInB,
-                         axisInA, axisInB, useReferenceFrameA);
+    joint = new BulletHingeJoint(body->jnt,
+                                 graph->q->ele[body->jnt->jointIndex],
+                                 *this, *parent, pivotInA, pivotInB,
+                                 axisInA, axisInB, useReferenceFrameA);
+  }
+  // Create slider joint
+  else
+  {
+    bool useReferenceFrameA = false;
+    btTransform frameInA = calcSliderTrans(body->jnt);
+    btTransform frameInB = parent->calcSliderTrans(body->jnt);
 
-  return hinge;
+    joint = new BulletSliderJoint(body->jnt,
+                                  graph->q->ele[body->jnt->jointIndex],
+                                  *this, *parent,
+                                  frameInA, frameInB,
+                                  useReferenceFrameA);
+  }
+
+  return joint;
 }
 
 /*******************************************************************************

@@ -55,7 +55,6 @@
 
 #include <BulletDynamics/MLCPSolvers/btDantzigSolver.h>
 #include <BulletDynamics/MLCPSolvers/btSolveProjectedGaussSeidel.h>
-#include <BulletDynamics/MLCPSolvers/btMLCPSolver.h>
 
 #include <iostream>
 #include <climits>
@@ -66,16 +65,26 @@ static const char className[] = "Bullet";
 static Rcs::PhysicsFactoryRegistrar<Rcs::BulletSimulation> physics(className);
 
 
-typedef std::map<const RcsJoint*, Rcs::BulletHingeJoint*>::iterator hinge_it;
+typedef std::map<const RcsJoint*, Rcs::BulletJointBase*>::iterator hinge_it;
 typedef std::map<const RcsBody*, Rcs::BulletRigidBody*>::iterator body_it;
 
 
 /*******************************************************************************
  * Callback for collision filtering. Do your collision logic here
  ******************************************************************************/
-static inline void MyNearCallbackDisabled(btBroadphasePair& collisionPair,
-                                          btCollisionDispatcher& dispatcher,
-                                          const btDispatcherInfo& dispatchInfo)
+void Rcs::BulletSimulation::NearCallbackAllToAll(btBroadphasePair& collisionPair,
+                                                 btCollisionDispatcher& dispatcher,
+                                                 const btDispatcherInfo& dispatchInfo)
+{
+  dispatcher.defaultNearCallback(collisionPair, dispatcher, dispatchInfo);
+}
+
+/*******************************************************************************
+ * Callback for collision filtering. Do your collision logic here
+ ******************************************************************************/
+void Rcs::BulletSimulation::MyNearCallbackDisabled(btBroadphasePair& collisionPair,
+                                                   btCollisionDispatcher& dispatcher,
+                                                   const btDispatcherInfo& dispatchInfo)
 {
   return;
 }
@@ -83,13 +92,21 @@ static inline void MyNearCallbackDisabled(btBroadphasePair& collisionPair,
 /*******************************************************************************
  * Callback for collision filtering. Do your collision logic here
  ******************************************************************************/
-static inline void MyNearCallbackEnabled(btBroadphasePair& collisionPair,
-                                         btCollisionDispatcher& dispatcher,
-                                         const btDispatcherInfo& dispatchInfo)
+void Rcs::BulletSimulation::MyNearCallbackEnabled(btBroadphasePair& collisionPair,
+                                                  btCollisionDispatcher& dispatcher,
+                                                  const btDispatcherInfo& dispatchInfo)
 {
   // Do your collision logic here
   btBroadphaseProxy* p0 = collisionPair.m_pProxy0;
   btBroadphaseProxy* p1 = collisionPair.m_pProxy1;
+
+  if (p0->isSoftBody(SOFTBODY_SHAPE_PROXYTYPE) ||
+      p1->isSoftBody(SOFTBODY_SHAPE_PROXYTYPE))
+  {
+    dispatcher.defaultNearCallback(collisionPair, dispatcher, dispatchInfo);
+    return;
+  }
+
   btCollisionObject* co0 = static_cast<btCollisionObject*>(p0->m_clientObject);
   btCollisionObject* co1 = static_cast<btCollisionObject*>(p1->m_clientObject);
 
@@ -108,6 +125,7 @@ static inline void MyNearCallbackEnabled(btBroadphasePair& collisionPair,
       if ((RcsBody_isChild(rb0->getBodyPtr(), rb1->getBodyPtr())) ||
           (RcsBody_isChild(rb1->getBodyPtr(), rb0->getBodyPtr())))
       {
+        NLOG(1, "Skipping %s - %s", rb0->getBodyName(), rb1->getBodyName());
         return;
       }
 
@@ -127,10 +145,28 @@ static inline void MyNearCallbackEnabled(btBroadphasePair& collisionPair,
   dispatcher.defaultNearCallback(collisionPair, dispatcher, dispatchInfo);
 }
 
-
-
-
-
+/*******************************************************************************
+ *
+ ******************************************************************************/
+Rcs::BulletSimulation::BulletSimulation() :
+  Rcs::PhysicsBase(),
+  dynamicsWorld(NULL),
+  broadPhase(NULL),
+  dispatcher(NULL),
+  solver(NULL),
+  mlcpSolver(NULL),
+  collisionConfiguration(NULL),
+  lastDt(0.001),
+  dragBody(NULL),
+  debugDrawer(NULL),
+  physicsConfigFile(NULL),
+  rigidBodyLinearDamping(0.1),
+  rigidBodyAngularDamping(0.9),
+  jointedBodyLinearDamping(0.0),
+  jointedBodyAngularDamping(0.0)
+{
+  pthread_mutex_init(&this->mtx, NULL);
+}
 
 /*******************************************************************************
  *
@@ -149,18 +185,14 @@ Rcs::BulletSimulation::BulletSimulation(const RcsGraph* graph_,
   debugDrawer(NULL),
   physicsConfigFile(NULL),
   rigidBodyLinearDamping(0.1),
-  rigidBodyAngularDamping(0.9)
+  rigidBodyAngularDamping(0.9),
+  jointedBodyLinearDamping(0.0),
+  jointedBodyAngularDamping(0.0)
 {
   pthread_mutex_init(&this->mtx, NULL);
 
   PhysicsConfig config(cfgFile);
   initPhysics(&config);
-
-  REXEC(5)
-  {
-    print();
-    RLOG(5, "Done BulletSimulation constructor");
-  }
 }
 
 /*******************************************************************************
@@ -180,16 +212,12 @@ Rcs::BulletSimulation::BulletSimulation(const RcsGraph* graph_,
   debugDrawer(NULL),
   physicsConfigFile(NULL),
   rigidBodyLinearDamping(0.1),
-  rigidBodyAngularDamping(0.9)
+  rigidBodyAngularDamping(0.9),
+  jointedBodyLinearDamping(0.0),
+  jointedBodyAngularDamping(0.0)
 {
   pthread_mutex_init(&this->mtx, NULL);
   initPhysics(config);
-
-  REXEC(5)
-  {
-    print();
-    RLOG(5, "Done BulletSimulation constructor");
-  }
 }
 
 /*******************************************************************************
@@ -208,10 +236,11 @@ Rcs::BulletSimulation::BulletSimulation(const BulletSimulation& copyFromMe):
   debugDrawer(NULL),
   physicsConfigFile(NULL),
   rigidBodyLinearDamping(copyFromMe.rigidBodyLinearDamping),
-  rigidBodyAngularDamping(copyFromMe.rigidBodyAngularDamping)
+  rigidBodyAngularDamping(copyFromMe.rigidBodyAngularDamping),
+  jointedBodyLinearDamping(copyFromMe.jointedBodyLinearDamping),
+  jointedBodyAngularDamping(copyFromMe.jointedBodyAngularDamping)
 {
   pthread_mutex_init(&this->mtx, NULL);
-
   PhysicsConfig config(copyFromMe.physicsConfigFile);
   initPhysics(&config);
 }
@@ -233,10 +262,11 @@ Rcs::BulletSimulation::BulletSimulation(const BulletSimulation& copyFromMe,
   debugDrawer(NULL),
   physicsConfigFile(NULL),
   rigidBodyLinearDamping(copyFromMe.rigidBodyLinearDamping),
-  rigidBodyAngularDamping(copyFromMe.rigidBodyAngularDamping)
+  rigidBodyAngularDamping(copyFromMe.rigidBodyAngularDamping),
+  jointedBodyLinearDamping(copyFromMe.jointedBodyLinearDamping),
+  jointedBodyAngularDamping(copyFromMe.jointedBodyAngularDamping)
 {
   pthread_mutex_init(&this->mtx, NULL);
-
   PhysicsConfig config(copyFromMe.physicsConfigFile);
   initPhysics(&config);
 }
@@ -271,14 +301,27 @@ Rcs::BulletSimulation::~BulletSimulation()
       // BulletRigidBody takes care of recursively deleting all shapes
       delete obj;
     }
-    else
-    {
-      // Other shapes such as ground plane need explicit destruction of shapes
-      delete obj->getCollisionShape();
-      delete obj;
-    }
+    //     else
+    //     {
+    //       // Other shapes such as ground plane need explicit destruction of shapes
+    //       delete obj->getCollisionShape();
+    //       delete obj;
+    //     }
 #endif
   }
+
+  // btSoftRigidDynamicsWorld* softWorld = dynamic_cast<btSoftRigidDynamicsWorld*>(this->dynamicsWorld);
+
+  // if (softWorld)
+  // {
+  //   btSoftBodyArray& arr = softWorld->getSoftBodyArray();
+
+  //   for (int i=0;i<arr.size(); ++i)
+  //   {
+  //     softWorld->removeSoftBody(arr[i]);
+  //     //delete arr[i];
+  //   }
+  // }
 
   delete this->dynamicsWorld;
   delete this->solver;
@@ -308,6 +351,18 @@ Rcs::BulletSimulation* Rcs::BulletSimulation::clone(RcsGraph* newGraph) const
 }
 
 /*******************************************************************************
+ * Physics initialization
+ ******************************************************************************/
+bool Rcs::BulletSimulation::initialize(const RcsGraph* g,
+                                       const PhysicsConfig* config)
+{
+  RCHECK(getGraph()==NULL);
+  initGraph(g);
+  initPhysics(config);
+  return true;
+}
+
+/*******************************************************************************
  *
  ******************************************************************************/
 void Rcs::BulletSimulation::lock() const
@@ -326,8 +381,18 @@ void Rcs::BulletSimulation::unlock() const
 /*******************************************************************************
  *
  ******************************************************************************/
+void Rcs::BulletSimulation::setNearCallback(btNearCallback nearCallback)
+{
+  dispatcher->setNearCallback(nearCallback);
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
 void Rcs::BulletSimulation::initPhysics(const PhysicsConfig* config)
 {
+  RCHECK_MSG(getGraph(), "Graph not yet created. Did you call init()?");
+
   this->physicsConfigFile = String_clone(config->getConfigFileName());
 
   // lookup bullet config node
@@ -339,80 +404,9 @@ void Rcs::BulletSimulation::initPhysics(const PhysicsConfig* config)
          "\"bullet parameters\" node!", this->physicsConfigFile);
   }
 
-  this->collisionConfiguration = new btDefaultCollisionConfiguration();
-  this->dispatcher = new btCollisionDispatcher(collisionConfiguration);
-  dispatcher->setNearCallback(MyNearCallbackEnabled);
-
-  btVector3 worldAabbMin(-10.0, -10.0, -10.0);
-  btVector3 worldAabbMax(10.0, 10.0, 10.0);
-  if (bulletParams)
-  {
-    // load axis sweep params from xml
-    double vec[3];
-
-    if (getXMLNodePropertyVec3(bulletParams, "world_aabb_min", vec))
-    {
-      worldAabbMin[0] = vec[0];
-      worldAabbMin[1] = vec[1];
-      worldAabbMin[2] = vec[2];
-    }
-    if (getXMLNodePropertyVec3(bulletParams, "world_aabb_max", vec))
-    {
-      worldAabbMax[0] = vec[0];
-      worldAabbMax[1] = vec[1];
-      worldAabbMax[2] = vec[2];
-    }
-  }
-  broadPhase = new btAxisSweep3(worldAabbMin, worldAabbMax);
-
-  bool useMCLPSolver = false;
-
-#if BT_BULLET_VERSION > 281
-  //useMCLPSolver = true;
-  if (bulletParams)
-  {
-    // load solver type from xml
-    getXMLNodePropertyBoolString(bulletParams, "use_mclp_solver",
-                                 &useMCLPSolver);
-  }
-  if (useMCLPSolver)
-  {
-    this->mlcpSolver = new btDantzigSolver();
-    //this->mlcpSolver = new btSolveProjectedGaussSeidel;
-    solver = new btMLCPSolver(this->mlcpSolver);
-    RLOG(5, "Using MCLP solver");
-  }
-  else
-#endif
-  {
-    solver = new btSequentialImpulseConstraintSolver;
-    RLOG(5, "Using sequential impulse solver");
-  }
-
-
-
-  this->dynamicsWorld =
-    new btDiscreteDynamicsWorld(dispatcher, broadPhase, solver,
-                                collisionConfiguration);
-  dynamicsWorld->setGravity(btVector3(0.0, 0.0, -RCS_GRAVITY));
-
-  btDispatcherInfo& di = dynamicsWorld->getDispatchInfo();
-  di.m_useConvexConservativeDistanceUtil = true;
-  di.m_convexConservativeDistanceThreshold = 0.01f;
-
-  btContactSolverInfo& si = dynamicsWorld->getSolverInfo();
-  si.m_numIterations = 200;//20;
-  // ERP: 0: no joint error correction (Recommended: 0.1-0.8, default 0.2)
-  si.m_erp = 0.2;
-  si.m_globalCfm = 1.0e-4; // 0: hard constraint (Default)
-  si.m_restingContactRestitutionThreshold = INT_MAX;
-  si.m_splitImpulse = 1;
-  si.m_solverMode = SOLVER_RANDMIZE_ORDER |
-                    SOLVER_FRICTION_SEPARATE |
-                    SOLVER_USE_2_FRICTION_DIRECTIONS |
-                    SOLVER_USE_WARMSTARTING;
-  si.m_minimumSolverBatchSize = useMCLPSolver ? 1 : 128;
-
+  // Create discrete dynamics world etc. This function is overwritten in the
+  // BulletSoftBody class.
+  createWorld(bulletParams);
 
   if (bulletParams)
   {
@@ -421,7 +415,12 @@ void Rcs::BulletSimulation::initPhysics(const PhysicsConfig* config)
                              &this->rigidBodyAngularDamping);
     getXMLNodePropertyDouble(bulletParams, "body_angular_damping",
                              &this->rigidBodyAngularDamping);
+    getXMLNodePropertyDouble(bulletParams, "jointed_body_linear_damping",
+                             &this->jointedBodyLinearDamping);
+    getXMLNodePropertyDouble(bulletParams, "jointed_body_angular_damping",
+                             &this->jointedBodyAngularDamping);
   }
+
   // Create physics for RcsGraph
   RCSGRAPH_TRAVERSE_BODIES(getGraph())
   {
@@ -436,6 +435,10 @@ void Rcs::BulletSimulation::initPhysics(const PhysicsConfig* config)
       {
         btBody->setDamping(rigidBodyLinearDamping, rigidBodyAngularDamping);
       }
+      else
+      {
+        btBody->setDamping(jointedBodyLinearDamping, jointedBodyAngularDamping);
+      }
 
       bdyMap[BODY] = btBody;
 
@@ -445,8 +448,6 @@ void Rcs::BulletSimulation::initPhysics(const PhysicsConfig* config)
       {
         btBody->setParentBody(it->second);
       }
-
-
 
       dynamicsWorld->addRigidBody(btBody);
       //dynamicsWorld->addCollisionObject(btBdy);
@@ -459,13 +460,13 @@ void Rcs::BulletSimulation::initPhysics(const PhysicsConfig* config)
         // before applying the offset
         if (BODY->jnt!=NULL)
         {
-          BulletHingeJoint* hinge = dynamic_cast<BulletHingeJoint*>(jnt);
+          BulletJointBase* jBase = dynamic_cast<BulletJointBase*>(jnt);
 
-          if (hinge != NULL)
+          if (jBase != NULL)
           {
-            hingeMap[BODY->jnt] = hinge;
+            jntMap[BODY->jnt] = jBase;
             RLOGS(5, "Joint %s has value %f (%f)",
-                  BODY->jnt->name, hinge->getHingeAngle(),
+                  BODY->jnt->name, jBase->getJointPosition(),
                   getGraph()->q->ele[BODY->jnt->jointIndex]);
           }
         }
@@ -502,6 +503,14 @@ void Rcs::BulletSimulation::initPhysics(const PhysicsConfig* config)
   this->dragBody = NULL;
   Vec3d_setZero(this->dragForce);
   Vec3d_setZero(this->dragAnchor);
+
+  // Update all transforms of the BulletRigidBody instance so that they show
+  // the correct transformations before the first simulate() call.
+  for (body_it it=bdyMap.begin(); it!=bdyMap.end(); ++it)
+  {
+    Rcs::BulletRigidBody* btBdy = it->second;
+    btBdy->updateBodyTransformFromPhysics();
+  }
 
   RCHECK(check());
 }
@@ -573,6 +582,9 @@ void Rcs::BulletSimulation::simulate(double dt, MatNd* q, MatNd* q_dot,
   }
 
   lock();
+
+
+
 #ifndef HEADLESS_BUILD
   if (this->debugDrawer != NULL)
   {
@@ -589,8 +601,18 @@ void Rcs::BulletSimulation::simulate(double dt, MatNd* q, MatNd* q_dot,
     debugDrawer->apply();
   }
 #endif
+
+  // This call only exists for compatibility with the BulletSoftSimulation
+  // class, where mesh vertices are updated according to the soft physics
+  // simulation. In this class, the function does nothing. It needs to be
+  // called with a locked mutex, since otherwise, the viewer update will
+  // be concurrent with the physics updates.
+  // \todo: Rethink this with efficiency in mind.
+  updateSoftMeshes();
+
   unlock();
 
+  // \todo: Check if we ave some concurrency issue here for the FTSensorNode
   updateSensors();
 
 
@@ -603,9 +625,9 @@ void Rcs::BulletSimulation::simulate(double dt, MatNd* q, MatNd* q_dot,
 
 
 
-  for (hinge_it it = hingeMap.begin(); it != hingeMap.end(); ++it)
+  for (hinge_it it = jntMap.begin(); it != jntMap.end(); ++it)
   {
-    Rcs::BulletHingeJoint* hinge = it->second;
+    Rcs::BulletJointBase* hinge = it->second;
     hinge->update(dt);
   }
 
@@ -669,7 +691,7 @@ void Rcs::BulletSimulation::simulate(double dt, MatNd* q, MatNd* q_dot,
 }
 
 /*******************************************************************************
- * Adapted from bullet/Demos/OpenGL/DemoApplication.cpp
+ *
  ******************************************************************************/
 void Rcs::BulletSimulation::reset()
 {
@@ -684,9 +706,9 @@ void Rcs::BulletSimulation::reset()
   btBroadphaseInterface* bi = dynamicsWorld->getBroadphase();
   btOverlappingPairCache* opc = bi->getOverlappingPairCache();
 
-  for (hinge_it it = hingeMap.begin(); it != hingeMap.end(); ++it)
+  for (hinge_it it = jntMap.begin(); it != jntMap.end(); ++it)
   {
-    Rcs::BulletHingeJoint* hinge = it->second;
+    Rcs::BulletJointBase* hinge = it->second;
     hinge->reset(this->q_des->ele[hinge->getJointIndex()]);
   }
 
@@ -746,7 +768,8 @@ void Rcs::BulletSimulation::setForce(const RcsBody* body, const double F[3],
       double relPos[3];
       Vec3d_sub(relPos, p, body->A_BI->org);
 
-      rigidBody->applyForce(btVector3(F[0], F[1], F[2]), btVector3(relPos[0], relPos[1], relPos[2]));
+      rigidBody->applyForce(btVector3(F[0], F[1], F[2]),
+                            btVector3(relPos[0], relPos[1], relPos[2]));
     }
     else
     {
@@ -912,13 +935,13 @@ void Rcs::BulletSimulation::getAngularVelocity(const RcsBody* body,
  ******************************************************************************/
 void Rcs::BulletSimulation::getJointAngles(MatNd* q, RcsStateType type) const
 {
-  MatNd_reshape(q, (type == RcsStateFull) ? getGraph()->dof : getGraph()->nJ, 1);
+  MatNd_reshape(q, (type==RcsStateFull) ? getGraph()->dof : getGraph()->nJ, 1);
 
 #if 0
   // Update all hinge joints
   std::map<const RcsJoint*, Rcs::BulletHingeJoint*>::const_iterator jit;
 
-  for (jit = hingeMap.begin(); jit != hingeMap.end(); ++jit)
+  for (jit = jntMap.begin(); jit != jntMap.end(); ++jit)
   {
     const RcsJoint* rj = jit->first;
     Rcs::BulletHingeJoint* hinge = jit->second;
@@ -928,7 +951,7 @@ void Rcs::BulletSimulation::getJointAngles(MatNd* q, RcsStateType type) const
       int idx = (type==RcsStateFull) ? rj->jointIndex : rj->jacobiIndex;
       RCHECK_MSG(idx>=0 && idx<(int)getGraph()->dof, "Joint \"%s\": idx = %d",
                  rj ? rj->name : "NULL", idx);
-      q->ele[idx] = hinge->getJointAngle();
+      q->ele[idx] = hinge->getJointPosition();
     }
     else
     {
@@ -943,11 +966,11 @@ void Rcs::BulletSimulation::getJointAngles(MatNd* q, RcsStateType type) const
     RCHECK_MSG(idx>=0 && idx<(int)getGraph()->dof, "Joint \"%s\": idx = %d",
                JNT->name, idx);
 
-    Rcs::BulletHingeJoint* hinge = getHinge(JNT);
+    Rcs::BulletJointBase* hinge = getHinge(JNT);
 
     if (hinge != NULL)
     {
-      q->ele[idx] = hinge->getJointAngle();
+      q->ele[idx] = hinge->getJointPosition();
     }
     else
     {
@@ -964,7 +987,6 @@ void Rcs::BulletSimulation::getJointAngles(MatNd* q, RcsStateType type) const
   for (it=bdyMap.begin(); it!=bdyMap.end(); ++it)
   {
     const RcsBody* rb = it->first;
-    RCHECK(rb);
 
     if (rb->rigid_body_joints == true)
       //if (RcsBody_isFloatingBase(rb) == true)
@@ -973,9 +995,10 @@ void Rcs::BulletSimulation::getJointAngles(MatNd* q, RcsStateType type) const
       RCHECK_MSG(btBdy, "%s", rb->name);
       HTr A_BI;
       btBdy->getBodyTransform(&A_BI);
-      int idx = (type==RcsStateFull) ? rb->jnt->jointIndex : rb->jnt->jacobiIndex;
+      const RcsJoint* jnt = rb->jnt;
+      int idx = (type==RcsStateFull) ? jnt->jointIndex : jnt->jacobiIndex;
       RCHECK_MSG(idx>=0 && idx<(int)getGraph()->dof, "Joint \"%s\": idx = %d",
-                 rb->jnt ? rb->jnt->name : "NULL", idx);
+                 jnt ? jnt->name : "NULL", idx);
 
       // Transformation update: Here we compute the rigid body degrees of
       // freedom so that the state vector matches the results from physics.
@@ -1021,12 +1044,12 @@ void Rcs::BulletSimulation::getJointVelocities(MatNd* q_dot,
   MatNd_reshape(q_dot, (type==RcsStateFull) ? getGraph()->dof : getGraph()->nJ, 1);
 
   // First update all hinge joints
-  std::map<const RcsJoint*, Rcs::BulletHingeJoint*>::const_iterator it;
+  std::map<const RcsJoint*, Rcs::BulletJointBase*>::const_iterator it;
 
-  for (it = hingeMap.begin(); it != hingeMap.end(); ++it)
+  for (it = jntMap.begin(); it != jntMap.end(); ++it)
   {
     const RcsJoint* rj = it->first;
-    Rcs::BulletHingeJoint* hinge = it->second;
+    Rcs::BulletJointBase* hinge = it->second;
 
     if (hinge != NULL)
     {
@@ -1049,37 +1072,21 @@ void Rcs::BulletSimulation::getJointVelocities(MatNd* q_dot,
   for (it2=bdyMap.begin(); it2!=bdyMap.end(); ++it2)
   {
     const RcsBody* rb = it2->first;
-    RCHECK(rb);
 
     if (rb->rigid_body_joints == true)
     {
       Rcs::BulletRigidBody* btBdy = it2->second;
-      RCHECK_MSG(btBdy, "%s", rb->name);
-
-      // btVector3 linearVelocity = btBdy->getLinearVelocity();
-      // btVector3 angularVelocity = btBdy->getAngularVelocity();
-
-      // NLOG(0, "Updating body %s: %f %f %f %f %f %f", rb->name,
-      //      linearVelocity[0], linearVelocity[1], linearVelocity[2],
-      //      angularVelocity[0], angularVelocity[1], angularVelocity[2]);
-
       RcsJoint* jnt = rb->jnt;
-      RCHECK(jnt);
       MatNd_set(q_dot, jnt->jointIndex, 0, btBdy->x_dot[0]);
       jnt = jnt->next;
-      RCHECK(jnt);
       MatNd_set(q_dot, jnt->jointIndex, 0, btBdy->x_dot[1]);
       jnt = jnt->next;
-      RCHECK(jnt);
       MatNd_set(q_dot, jnt->jointIndex, 0, btBdy->x_dot[2]);
       jnt = jnt->next;
-      RCHECK(jnt);
       MatNd_set(q_dot, jnt->jointIndex, 0, btBdy->omega[0]);
       jnt = jnt->next;
-      RCHECK(jnt);
       MatNd_set(q_dot, jnt->jointIndex, 0, btBdy->omega[1]);
       jnt = jnt->next;
-      RCHECK(jnt);
       MatNd_set(q_dot, jnt->jointIndex, 0, btBdy->omega[2]);
     }
   }
@@ -1091,7 +1098,7 @@ void Rcs::BulletSimulation::getJointVelocities(MatNd* q_dot,
  ******************************************************************************/
 void Rcs::BulletSimulation::setJointTorque(const RcsJoint* jnt, double torque)
 {
-  Rcs::BulletHingeJoint* hinge = getHinge(jnt);
+  Rcs::BulletJointBase* hinge = getHinge(jnt);
 
   if (hinge == NULL)
   {
@@ -1109,7 +1116,7 @@ void Rcs::BulletSimulation::setJointTorque(const RcsJoint* jnt, double torque)
 bool Rcs::BulletSimulation::setJointAngle(const RcsJoint* jnt, double angle,
                                           double dt)
 {
-  Rcs::BulletHingeJoint* hinge = getHinge(jnt);
+  Rcs::BulletJointBase* hinge = getHinge(jnt);
 
   if (hinge == NULL)
   {
@@ -1118,7 +1125,7 @@ bool Rcs::BulletSimulation::setJointAngle(const RcsJoint* jnt, double angle,
     return false;
   }
 
-  hinge->setJointAngle(angle, dt);
+  hinge->setJointPosition(angle, dt);
 
   return true;
 }
@@ -1191,17 +1198,15 @@ void Rcs::BulletSimulation::disableCollision(const RcsBody* b0,
  * Lock axis: lower limit = upper limit
  * Disable limits: lower limit > upper limit
  ******************************************************************************/
-//! \todo Prismatic joints are missing.
 void Rcs::BulletSimulation::setJointLimits(bool enable)
 {
-  for (hinge_it it = hingeMap.begin(); it != hingeMap.end(); ++it)
+  for (hinge_it it = jntMap.begin(); it != jntMap.end(); ++it)
   {
-    const RcsJoint* jnt = it->first;
-    Rcs::BulletHingeJoint* hinge = it->second;
-    RCHECK(jnt);
-    RCHECK(hinge);
+    Rcs::BulletJointBase* hinge = it->second;
+
     if (enable==true)
     {
+      const RcsJoint* jnt = it->first;
       hinge->setJointLimit(enable, jnt->q_min, jnt->q_max);
     }
     else
@@ -1326,10 +1331,10 @@ void Rcs::BulletSimulation::applyControl(double dt)
 
 
   // Set desired joint controls
-  for (hinge_it it = hingeMap.begin(); it != hingeMap.end(); ++it)
+  for (hinge_it it = jntMap.begin(); it != jntMap.end(); ++it)
   {
     const RcsJoint* JNT = it->first;
-    Rcs::BulletHingeJoint* hinge = it->second;
+    Rcs::BulletJointBase* hinge = it->second;
 
     if (JNT->ctrlType==RCSJOINT_CTRL_TORQUE)
     {
@@ -1339,14 +1344,14 @@ void Rcs::BulletSimulation::applyControl(double dt)
     else if (JNT->ctrlType==RCSJOINT_CTRL_POSITION)
     {
       double q_cmd = MatNd_get(this->q_des, JNT->jointIndex, 0);
-      hinge->setJointAngle(q_cmd, dt);
+      hinge->setJointPosition(q_cmd, dt);
     }
     else   // RCSJOINT_CTRL_VELOCITY
     {
-      double q_curr_i = hinge->getJointAngle();
+      double q_curr_i = hinge->getJointPosition();
       double q_dot_des_i = MatNd_get(this->q_dot_des, JNT->jointIndex, 0);
       double q_des_i  = q_curr_i + q_dot_des_i*dt;
-      hinge->setJointAngle(q_des_i, dt);
+      hinge->setJointPosition(q_des_i, dt);
     }
   }
 
@@ -1368,7 +1373,12 @@ bool Rcs::BulletSimulation::updateLoadcell(const RcsSensor* fts)
   btFixedConstraint* jnt =
     static_cast<btFixedConstraint*>(rb->getUserPointer());
 
-  RCHECK(jnt);
+  if (jnt == NULL)
+  {
+    RLOG(1, "Load cell of body \"%s\" is not attached to joint",
+         fts->body->name);
+    return false;
+  }
 
   const btJointFeedback* jf = jnt->getJointFeedback();
 
@@ -1489,18 +1499,18 @@ Rcs::BulletRigidBody* Rcs::BulletSimulation::getRigidBody(const RcsBody* bdy) co
 /*******************************************************************************
  *
  ******************************************************************************/
-Rcs::BulletHingeJoint* Rcs::BulletSimulation::getHinge(const RcsJoint* jnt) const
+Rcs::BulletJointBase* Rcs::BulletSimulation::getHinge(const RcsJoint* jnt) const
 {
   if (jnt == NULL)
   {
     return NULL;
   }
 
-  std::map<const RcsJoint*, Rcs::BulletHingeJoint*>::const_iterator it;
+  std::map<const RcsJoint*, Rcs::BulletJointBase*>::const_iterator it;
 
-  it = hingeMap.find(jnt);
+  it = jntMap.find(jnt);
 
-  if (it!=hingeMap.end())
+  if (it!=jntMap.end())
   {
     return it->second;
   }
@@ -1883,7 +1893,7 @@ bool Rcs::BulletSimulation::removeBody(const char* name)
  ******************************************************************************/
 bool Rcs::BulletSimulation::addBody(const RcsBody* body_)
 {
-  RLOG(1, "Creating bullet body for \"%s\"", body_->name);
+  RLOG(5, "Creating bullet body for \"%s\"", body_->name);
 
   PhysicsConfig config(this->physicsConfigFile);
 
@@ -1895,12 +1905,20 @@ bool Rcs::BulletSimulation::addBody(const RcsBody* body_)
   BulletRigidBody* btBody = BulletRigidBody::create(body, &config);
   RCHECK(btBody);
 
+  // Continuous collision detection
+  // btBody->setCcdSweptSphereRadius(0.05);
+  // btBody->setCcdMotionThreshold(0.0);
+
   if (btBody != NULL)
   {
     // apply configured damping
     if (body->rigid_body_joints)
     {
       btBody->setDamping(rigidBodyLinearDamping, rigidBodyAngularDamping);
+    }
+    else
+    {
+      btBody->setDamping(jointedBodyLinearDamping, jointedBodyAngularDamping);
     }
 
     bdyMap[body] = btBody;
@@ -1922,13 +1940,13 @@ bool Rcs::BulletSimulation::addBody(const RcsBody* body_)
       // before applying the offset
       if (body->jnt != NULL)
       {
-        BulletHingeJoint* hinge = dynamic_cast<BulletHingeJoint*>(jnt);
+        BulletJointBase* jBase = dynamic_cast<BulletJointBase*>(jnt);
 
-        if (hinge != NULL)
+        if (jBase != NULL)
         {
-          hingeMap[body->jnt] = hinge;
+          jntMap[body->jnt] = jBase;
           RLOGS(5, "Joint %s has value %f (%f)",
-                body->jnt->name, hinge->getHingeAngle(),
+                body->jnt->name, jBase->getJointPosition(),
                 MatNd_get(getGraph()->q, body->jnt->jointIndex, 0));
         }
       }
@@ -2036,8 +2054,8 @@ bool Rcs::BulletSimulation::activateBody(const char* name, const HTr* A_BI)
 }
 
 /*******************************************************************************
-*
-******************************************************************************/
+ *
+ ******************************************************************************/
 bool Rcs::BulletSimulation::check() const
 {
   bool success = true;
@@ -2081,4 +2099,65 @@ bool Rcs::BulletSimulation::check() const
   success = PhysicsBase::check() && success;
 
   return success;
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Rcs::BulletSimulation::createWorld(xmlNodePtr bulletParams)
+{
+  bool useMCLPSolver = false;
+
+  if (bulletParams)
+  {
+    // load solver type from xml
+    getXMLNodePropertyBoolString(bulletParams, "use_mclp_solver",
+                                 &useMCLPSolver);
+  }
+
+  this->collisionConfiguration = new btDefaultCollisionConfiguration();
+  this->dispatcher = new btCollisionDispatcher(collisionConfiguration);
+  dispatcher->setNearCallback(MyNearCallbackEnabled);
+  broadPhase = new btDbvtBroadphase();
+
+  if (useMCLPSolver)
+  {
+    this->mlcpSolver = new btDantzigSolver();
+    //this->mlcpSolver = new btSolveProjectedGaussSeidel;
+    solver = new btMLCPSolver(this->mlcpSolver);
+    RLOG(5, "Using MCLP solver");
+  }
+  else
+  {
+    solver = new btSequentialImpulseConstraintSolver;
+    RLOG(5, "Using sequential impulse solver");
+  }
+
+  this->dynamicsWorld = new btDiscreteDynamicsWorld(dispatcher, broadPhase, solver,
+                                                    collisionConfiguration);
+  dynamicsWorld->setGravity(btVector3(0.0, 0.0, -RCS_GRAVITY));
+
+  btDispatcherInfo& di = dynamicsWorld->getDispatchInfo();
+  di.m_useConvexConservativeDistanceUtil = true;
+  di.m_convexConservativeDistanceThreshold = 0.01f;
+
+  btContactSolverInfo& si = dynamicsWorld->getSolverInfo();
+  si.m_numIterations = 200;//20;
+  // ERP: 0: no joint error correction (Recommended: 0.1-0.8, default 0.2)
+  si.m_erp = 0.2;
+  si.m_globalCfm = 1.0e-4; // 0: hard constraint (Default)
+  si.m_restingContactRestitutionThreshold = INT_MAX;
+  si.m_splitImpulse = 1;
+  si.m_solverMode = SOLVER_RANDMIZE_ORDER |
+                    SOLVER_FRICTION_SEPARATE |
+                    SOLVER_USE_2_FRICTION_DIRECTIONS |
+                    SOLVER_USE_WARMSTARTING;
+  si.m_minimumSolverBatchSize = useMCLPSolver ? 1 : 128;
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Rcs::BulletSimulation::updateSoftMeshes()
+{
 }

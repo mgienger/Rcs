@@ -41,26 +41,18 @@
 
 #include <PhysicsBase.h>
 
+#include <btBulletDynamicsCommon.h>
+#include <BulletDynamics/MLCPSolvers/btMLCPSolver.h>
+
 #include <pthread.h>
-
 #include <map>
-
-class btBroadphaseInterface;
-class btCollisionShape;
-class btOverlappingPairCache;
-class btCollisionDispatcher;
-class btConstraintSolver;
-struct btCollisionAlgorithmCreateFunc;
-class btDefaultCollisionConfiguration;
-class btDynamicsWorld;
-class btMLCPSolverInterface;
-class btVector3;
+#include <string>
 
 
 namespace Rcs
 {
 class BulletRigidBody;
-class BulletHingeJoint;
+class BulletJointBase;
 class BulletDebugDrawer;
 
 /*! \ingroup RcsPhysics
@@ -70,11 +62,13 @@ class BulletSimulation : public PhysicsBase
 {
 public:
 
+  BulletSimulation();
   BulletSimulation(const RcsGraph* graph, const char* configFile=NULL);
   BulletSimulation(const RcsGraph* graph, const PhysicsConfig* config);
   BulletSimulation(const BulletSimulation& copyFromMe);
-  BulletSimulation(const BulletSimulation& copyFromMe, const RcsGraph* newGraph);
-  ~BulletSimulation();
+  BulletSimulation(const BulletSimulation& copyFromMe,
+                   const RcsGraph* newGraph);
+  virtual ~BulletSimulation();
 
   /**
   * @name InheritanceInterface
@@ -84,6 +78,9 @@ public:
 
   ///@{
 
+
+  /*! \copydoc PhysicsBase::step(double)
+   */
   virtual void step(double dt);
   virtual void simulate(double dt, MatNd* q =NULL, MatNd* q_dot=NULL,
                         MatNd* q_ddot=NULL, MatNd* T=NULL, bool control=false);
@@ -92,7 +89,8 @@ public:
   virtual const char* getClassName() const;
   virtual void setForce(const RcsBody* body, const double F[3],
                         const double p[3]);
-  virtual void applyImpulse(const RcsBody* body, const double F[3], const double p[3]);
+  virtual void applyImpulse(const RcsBody* body, const double F[3],
+                            const double p[3]);
   virtual void applyForce(const RcsBody* body, const double F[3],
                           const double r[3]);
   virtual void applyTransform(const RcsBody* body, const HTr* A_BI);
@@ -101,7 +99,8 @@ public:
   virtual void getLinearVelocity(const RcsBody* body, double v[3]) const;
   virtual void getAngularVelocity(const RcsBody* body, double omega[3]) const;
   void setJointTorque(const MatNd* T_des);
-  virtual void getJointTorque(MatNd* T_curr, RcsStateType type=RcsStateFull) const;
+  virtual void getJointTorque(MatNd* T_curr,
+                              RcsStateType type=RcsStateFull) const;
   virtual void getJointAngles(MatNd* q,
                               RcsStateType type=RcsStateFull) const;
   virtual void getJointVelocities(MatNd* q_dot,
@@ -117,6 +116,7 @@ public:
   virtual void setJointCompliance(const MatNd* stiffness,
                                   const MatNd* damping=NULL);
   virtual void getJointCompliance(MatNd* stiffness, MatNd* damping=NULL) const;
+  virtual bool initialize(const RcsGraph* g, const PhysicsConfig* config);
 
   ///@}
 
@@ -176,18 +176,35 @@ public:
 
   virtual bool check() const;
 
+  void setNearCallback(btNearCallback nearCallback);
+
   btDynamicsWorld* dynamicsWorld;
 
-private:
+protected:
 
-  void initPhysics(const PhysicsConfig* config);
+  static void NearCallbackAllToAll(btBroadphasePair& collisionPair,
+                                   btCollisionDispatcher& dispatcher,
+                                   const btDispatcherInfo& dispatchInfo);
+
+  static void MyNearCallbackEnabled(btBroadphasePair& collisionPair,
+                                    btCollisionDispatcher& dispatcher,
+                                    const btDispatcherInfo& dispatchInfo);
+
+  static void MyNearCallbackDisabled(btBroadphasePair& collisionPair,
+                                     btCollisionDispatcher& dispatcher,
+                                     const btDispatcherInfo& dispatchInfo);
+
+
+  virtual void initPhysics(const PhysicsConfig* config);
   void applyControl(double dt);
   void updateSensors();
   bool updatePPSSensor(RcsSensor* sensor);
   bool updateLoadcell(const RcsSensor* loadCell);
   void setJointTorque(const RcsJoint* jnt, double torque);
   bool setJointAngle(const RcsJoint* jnt, double angle, double dt);
-  BulletHingeJoint* getHinge(const RcsJoint* jnt) const;
+  BulletJointBase* getHinge(const RcsJoint* jnt) const;
+  virtual void createWorld(xmlNodePtr bulletParams);
+  virtual void updateSoftMeshes();
 
   btBroadphaseInterface* broadPhase;
   btCollisionDispatcher* dispatcher;
@@ -197,7 +214,7 @@ private:
   mutable pthread_mutex_t mtx;
   double lastDt;
   std::map<const RcsBody*, BulletRigidBody*> bdyMap;
-  std::map<const RcsJoint*, BulletHingeJoint*> hingeMap;
+  std::map<const RcsJoint*, BulletJointBase*> jntMap;
   std::map<std::string, BulletRigidBody*> deactivatedBodies;
 
 
@@ -210,6 +227,10 @@ private:
 
   double rigidBodyLinearDamping;
   double rigidBodyAngularDamping;
+  double jointedBodyLinearDamping;
+  double jointedBodyAngularDamping;
+
+private:
 
   /*! \brief Private assignment operator to avoid it from being used
    */

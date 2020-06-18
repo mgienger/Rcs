@@ -286,6 +286,14 @@ int Math_getRandomInteger(int lower, int upper)
 }
 
 /*******************************************************************************
+ * See header
+ ******************************************************************************/
+bool Math_getRandomBool()
+{
+  return Math_getRandomInteger(0, 1) == 0 ? true : false;
+}
+
+/*******************************************************************************
  * Since the srand function requres a long unsigned int, it happens for large
  * system times that the seed is always the same. Therefore, here we just
  * consider the values after the comma, and multiply it by 1000.
@@ -307,7 +315,46 @@ void Math_srand48(long int seed)
   srand48(seed);
 #endif
   randomNumberGeneratorInit = true;
-  NLOG(0, "seed: %ld", seed);
+}
+
+/*******************************************************************************
+ *
+******************************************************************************/
+void Math_Cart2Cyl(const double p[3], double* radialDist, double* azimuth,
+                   double* height)
+{
+  *radialDist = sqrt(p[0]*p[0]+p[1]*p[1]);
+  *height = p[2];
+  *azimuth = atan2(p[1],p[0]);
+}
+
+/*******************************************************************************
+ *
+******************************************************************************/
+void Math_Cyl2Cart(const double radialDist, const double azimuth,
+                   const double height, double p[3])
+{
+  p[0] = radialDist*cos(azimuth);
+  p[1] = radialDist*sin(azimuth);
+  p[2] = height;
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Math_dCyldCart(double dCyldCart[3][3], const double cart[3])
+{
+  const double r = sqrt(cart[0]*cart[0]+cart[1]*cart[1]);
+  const double r2 = r*r;
+  dCyldCart[0][0] =  cart[0]/r;
+  dCyldCart[0][1] =  cart[1]/r;
+  dCyldCart[0][2] =  0.0;
+  dCyldCart[1][0] = -cart[1]/r2;
+  dCyldCart[1][1] =  cart[0]/r2;
+  dCyldCart[1][2] =  0.0;
+  dCyldCart[2][0] =  0.0;
+  dCyldCart[2][1] =  0.0;
+  dCyldCart[2][2] =  1.0;
 }
 
 /*******************************************************************************

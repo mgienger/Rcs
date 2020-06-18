@@ -50,36 +50,41 @@ namespace Rcs
 class BulletRigidBody : public btRigidBody
 {
   friend class BulletSimulation;
+  friend class BulletSoftSimulation;
 
-public: 
-  static BulletRigidBody* create(const RcsBody* body, 
-                                 const PhysicsConfig* config);
-  const RcsBody* getBodyPtr() const;
+public:
   void getBodyTransform(HTr* A_BI) const;
-  void getLocalBodyTransform(HTr* A_PB) const;
-  void getPhysicsTransform(HTr* A_PI) const;
-  void setBodyTransform(const HTr* A_BI);
-  void setBodyTransform(const HTr* A_BI, double dt);
-  const HTr* getBodyTransformPtr() const;
   const HTr* getCOMTransformPtr() const;
-  void reset(const HTr* A_BI=NULL);
-  const char* getBodyName() const;
-  static btCollisionShape* createShape(RcsShape* sh,
-                                       btTransform& relTrans,
-                                       const RcsBody* body);
-  btCollisionShape* getShape(const RcsShape* shape);
 
+private:
+  const HTr* getBodyTransformPtr() const;
+  static BulletRigidBody* create(const RcsBody* body,
+                                 const PhysicsConfig* config);
   BulletRigidBody(const btRigidBody::btRigidBodyConstructionInfo& rbInfo,
                   const RcsBody* body);
-private:
   virtual ~BulletRigidBody();
 
   void clearShapes();
   void calcHingeTrans(const RcsJoint* jnt, btVector3& pivot, btVector3& axis);
+  btTransform calcSliderTrans(const RcsJoint* jnt);
   btTypedConstraint* createFixedJoint(const RcsGraph* graph);
   btTypedConstraint* createJoint(const RcsGraph* graph);
   void updateBodyTransformFromPhysics();
   void setParentBody(BulletRigidBody* parent);
+  void getPhysicsTransform(HTr* A_PI) const;
+  void reset(const HTr* A_BI=NULL);
+  static btCollisionShape* createShape(RcsShape* sh,
+                                       btTransform& relTrans,
+                                       const RcsBody* body,
+                                       unsigned int convexHullVertexLimit);
+  btCollisionShape* getShape(const RcsShape* shape);
+  const RcsBody* getBodyPtr() const;
+  void setBodyTransform(const HTr* A_BI);
+  void setBodyTransform(const HTr* A_BI, double dt);
+  const char* getBodyName() const;
+
+  // Obsolete
+  void getLocalBodyTransform(HTr* A_PB) const;
 
   const RcsBody* body;     // Pointer to corresponding graph's body
   BulletRigidBody* parent; // Depth-first parent body

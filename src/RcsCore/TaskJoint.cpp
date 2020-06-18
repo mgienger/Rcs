@@ -54,7 +54,7 @@ Rcs::TaskJoint::TaskJoint(const std::string& className,
                           RcsGraph* _graph,
                           int dim):
   TaskGenericIK(className, node, _graph, dim),
-  joint(NULL)
+  joint(NULL), refJoint(NULL)
 {
   // Parse XML file
   char msg[265] = "";
@@ -69,29 +69,42 @@ Rcs::TaskJoint::TaskJoint(const std::string& className,
   RCHECK_MSG(this->joint->constrained==false, "Joint \"%s\" is constrained",
              msg);
 
+  // ref-joint
+  if (getXMLNodeProperty(node, "refJnt"))
+  {
+    getXMLNodePropertyStringN(node, "refJnt", msg, 256);
+    this->refJoint = RcsGraph_getJointByName(this->graph, msg);
+    RCHECK_MSG(this->refJoint, "Joint \"%s\" doesn't exist!", msg);
+
+    // We require the joint to be unconstrained. Otherwise, we'll have a zero
+    // Jacobian.
+    RCHECK_MSG(refJoint->constrained==false, "Ref-joint \"%s\" is "
+               "constrained", msg);
+  }
+
   // re-initialize parameters
   if (RcsJoint_isTranslation(this->joint) == true)
   {
     std::string label = std::string(this->joint->name) + " [m]";
-    getParameter(0)->setParameters(this->joint->q_min, this->joint->q_max,
-                                   1.0, label);
+    resetParameter(Parameters(this->joint->q_min, this->joint->q_max,
+                              1.0, label));
   }
   else
   {
     std::string label = std::string(this->joint->name) + " [deg]";
-    getParameter(0)->setParameters(this->joint->q_min, this->joint->q_max,
-                                   (180. / M_PI), label);
+    resetParameter(Parameters(this->joint->q_min, this->joint->q_max,
+                              180.0/M_PI, label));
   }
 }
 
 /*******************************************************************************
  * Constructor based on xml parsing
  ******************************************************************************/
-Rcs::TaskJoint::TaskJoint(RcsJoint* _joint,
+Rcs::TaskJoint::TaskJoint(const RcsJoint* _joint,
+                          const RcsJoint* _refJoint,
                           xmlNode* node,
                           RcsGraph* _graph):
-  TaskGenericIK("Joint", node, _graph, 1),
-  joint(_joint)
+  TaskGenericIK("Joint", node, _graph, 1), joint(_joint), refJoint(_refJoint)
 {
   // We require the joint to be unconstrained. Otherwise, we'll have a zero
   // Jacobian.
@@ -102,24 +115,23 @@ Rcs::TaskJoint::TaskJoint(RcsJoint* _joint,
   if (RcsJoint_isTranslation(this->joint) == true)
   {
     std::string label = std::string(this->joint->name) + " [m]";
-    getParameter(0)->setParameters(this->joint->q_min, this->joint->q_max,
-                                   1.0, label);
+    resetParameter(Parameters(this->joint->q_min, this->joint->q_max,
+                              1.0, label));
   }
   else
   {
     std::string label = std::string(this->joint->name) + " [deg]";
-    getParameter(0)->setParameters(this->joint->q_min, this->joint->q_max,
-                                   (180. / M_PI), label);
+    resetParameter(Parameters(this->joint->q_min, this->joint->q_max,
+                              (180. / M_PI), label));
   }
 }
 
 /*******************************************************************************
-* Constructor based on body pointers
+ *
 ******************************************************************************/
-//! \todo Memory leak when derieved class calls params.clear()
-Rcs::TaskJoint::TaskJoint(RcsGraph* graph_, RcsJoint* jnt) :
-  TaskGenericIK(),
-  joint(jnt)
+Rcs::TaskJoint::TaskJoint(RcsGraph* graph_, const RcsJoint* jnt,
+                          const RcsJoint* _refJoint) :
+  TaskGenericIK(), joint(jnt), refJoint(_refJoint)
 {
   // We require the joint to be unconstrained. Otherwise, we'll have a zero
   // Jacobian.
@@ -131,22 +143,19 @@ Rcs::TaskJoint::TaskJoint(RcsGraph* graph_, RcsJoint* jnt) :
   setClassName("Joint");
   setName("Jnt " + std::string(jnt->name));
   setDim(1);
-  std::vector<Parameters*>& params = getParameters();
-  params.clear();
-  params.push_back(new Task::Parameters(-1.0, 1.0, 1.0, "X [m]"));
 
   // re-initialize parameters. That's all done a bit weird and needs revision.
   if (RcsJoint_isTranslation(this->joint) == true)
   {
     std::string label = std::string(this->joint->name) + " [m]";
-    getParameter(0)->setParameters(this->joint->q_min, this->joint->q_max,
-                                   1.0, label);
+    resetParameter(Task::Parameters(this->joint->q_min, this->joint->q_max,
+                                    1.0, label));
   }
   else
   {
     std::string label = std::string(this->joint->name) + " [deg]";
-    getParameter(0)->setParameters(this->joint->q_min, this->joint->q_max,
-                                   (180. / M_PI), label);
+    resetParameter(Task::Parameters(this->joint->q_min, this->joint->q_max,
+                                    180.0/M_PI, label));
   }
 
 }
@@ -155,8 +164,7 @@ Rcs::TaskJoint::TaskJoint(RcsGraph* graph_, RcsJoint* jnt) :
  * Copy constructor doing deep copying
  ******************************************************************************/
 Rcs::TaskJoint::TaskJoint(const TaskJoint& copyFromMe, RcsGraph* newGraph):
-  TaskGenericIK(copyFromMe, newGraph),
-  joint(NULL)
+  TaskGenericIK(copyFromMe, newGraph), joint(NULL), refJoint(NULL)
 {
   if (newGraph != NULL)
   {
@@ -164,10 +172,16 @@ Rcs::TaskJoint::TaskJoint(const TaskJoint& copyFromMe, RcsGraph* newGraph):
     {
       this->joint = RcsGraph_getJointByName(newGraph, copyFromMe.joint->name);
     }
+    if (copyFromMe.refJoint != NULL)
+    {
+      this->refJoint = RcsGraph_getJointByName(newGraph,
+                                               copyFromMe.refJoint->name);
+    }
   }
   else
   {
     this->joint = copyFromMe.joint;
+    this->refJoint = copyFromMe.refJoint;
   }
 }
 
@@ -193,6 +207,11 @@ Rcs::TaskJoint* Rcs::TaskJoint::clone(RcsGraph* newGraph) const
 void Rcs::TaskJoint::computeX(double* x_res) const
 {
   x_res[0] = MatNd_get(this->graph->q, this->joint->jointIndex, 0);
+
+  if (this->refJoint)
+  {
+    x_res[0] += MatNd_get(this->graph->q, this->refJoint->jointIndex, 0);
+  }
 }
 
 /*******************************************************************************
@@ -201,7 +220,12 @@ void Rcs::TaskJoint::computeX(double* x_res) const
  ******************************************************************************/
 void Rcs::TaskJoint::computeXp(double* x_dot_res) const
 {
-  x_dot_res[0] = MatNd_get(this->graph->q_dot, this->joint->jointIndex, 0);
+  x_dot_res[0] = MatNd_get(graph->q_dot, joint->jointIndex, 0);
+
+  if (this->refJoint)
+  {
+    x_dot_res[0] += MatNd_get(graph->q_dot, refJoint->jointIndex, 0);
+  }
 }
 
 /*******************************************************************************
@@ -213,6 +237,11 @@ void Rcs::TaskJoint::computeJ(MatNd* jacobian) const
 {
   MatNd_reshapeAndSetZero(jacobian, 1, this->graph->nJ);
   MatNd_set(jacobian, 0, this->joint->jacobiIndex,  1.0);
+
+  if (this->refJoint)
+  {
+    MatNd_set(jacobian, 0, this->refJoint->jacobiIndex, 1.0);
+  }
 }
 
 /*******************************************************************************
@@ -226,9 +255,17 @@ void Rcs::TaskJoint::computeH(MatNd* hessian) const
 /*******************************************************************************
  * See header.
  ******************************************************************************/
-RcsJoint* Rcs::TaskJoint::getJoint() const
+const RcsJoint* Rcs::TaskJoint::getJoint() const
 {
   return this->joint;
+}
+
+/*******************************************************************************
+ * See header.
+ ******************************************************************************/
+const RcsJoint* Rcs::TaskJoint::getRefJoint() const
+{
+  return this->refJoint;
 }
 
 /*******************************************************************************
@@ -249,6 +286,31 @@ void Rcs::TaskJoint::computeAX(double* a_res,
   double vel_des = 0.0;
   Rcs::TaskGenericIK::computeAX(a_res, integral_x, x_des, &vel_des, NULL,
                                 S_des, a_des, 0.2*kp, kd, ki);
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Rcs::TaskJoint::print() const
+{
+  TaskGenericIK::print();
+  printf("Joint: \"%s\"\n", joint ? joint->name : "NULL");
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Rcs::TaskJoint::setJoint(RcsJoint* jnt)
+{
+  this->joint = jnt;
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+void Rcs::TaskJoint::setRefJoint(RcsJoint* jnt)
+{
+  this->refJoint = jnt;
 }
 
 /*******************************************************************************
@@ -277,6 +339,15 @@ bool Rcs::TaskJoint::isValid(xmlNode* node, const RcsGraph* graph)
   if (joint==NULL)
   {
     RLOG(3, "Task \"%s\": Joint \"%s\" not found", taskName, tag);
+    success = false;
+  }
+
+  // We require the joint to be unconstrained. Otherwise, we'll have a zero
+  // Jacobian.
+  if (joint->constrained==true)
+  {
+    RLOG(3, "Task \"%s\": Joint \"%s\" is constrained",
+         taskName, joint->name);
     success = false;
   }
 

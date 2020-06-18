@@ -1,4 +1,38 @@
-AUX_SOURCE_DIRECTORY (${CMAKE_CURRENT_SOURCE_DIR} RCS_GRAPHICS_SRCS)
+###############################################################################
+#
+# CMakeLists file for the RcsGraphics library
+#
+###############################################################################
+SET(RCS_GRAPHICS_SRCS
+ArrowNode.cpp
+BodyNode.cpp
+BodyPointDragger.cpp
+BoxNode.cpp
+CapsuleNode.cpp
+COSNode.cpp
+CylinderNode.cpp
+DepthRenderer.cpp
+FTSensorNode.cpp
+GraphNode.cpp
+HUD.cpp
+KeyCatcher.cpp
+MeshNode.cpp
+MouseDragger.cpp
+NodeBase.cpp
+PPSSensorNode.cpp
+Rcs_graphicsUtils.cpp
+RcsViewer.cpp
+RigidBodyTracker.cpp
+SphereNode.cpp
+SSRNode.cpp
+TargetSetter.cpp
+TextNode3D.cpp
+TorusNode.cpp
+TransformTrace.cpp
+VectorFieldNode.cpp
+VertexArrayNode.cpp
+)
+
 ADD_LIBRARY(RcsGraphics ${LIBRARY_LINKING_TYPE} ${RCS_GRAPHICS_SRCS})
 
 TARGET_INCLUDE_DIRECTORIES(RcsGraphics PUBLIC
@@ -19,6 +53,15 @@ ENDIF(USE_OCTOMAP)
 
 TARGET_LINK_LIBRARIES(RcsGraphics RcsCore ${OPENSCENEGRAPH_LIBRARIES})
 
+# copy the .dll file to the same folder as the executable
+IF (WIN32)
+ADD_CUSTOM_COMMAND(
+    TARGET RcsGraphics POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+    ${LIBRARY_OUTPUT_PATH}/${CMAKE_BUILD_TYPE}/RcsGraphics.dll
+    ${EXECUTABLE_OUTPUT_PATH}/${CMAKE_BUILD_TYPE}/RcsGraphics.dll)
+ENDIF()
+
 # Mark for export
 RCS_ADD_EXPORT_LIBRARY(RcsGraphics)
 
@@ -30,4 +73,4 @@ INSTALL(
   FILES_MATCHING PATTERN "*.h"
 )
 # Install the binaries
-INSTALL(TARGETS RcsGraphics EXPORT RcsExport DESTINATION lib)
+INSTALL(TARGETS RcsGraphics EXPORT RcsExport DESTINATION lib/${PLATFORM_INSTALL_DIR})

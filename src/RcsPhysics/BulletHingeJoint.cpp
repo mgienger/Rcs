@@ -55,25 +55,26 @@ Rcs::BulletHingeJoint::BulletHingeJoint(RcsJoint* jnt, double q0,
                                         const btVector3& axisInA,
                                         const btVector3& axisInB,
                                         bool useReferenceFrameA):
+  BulletJointBase(),
   btHingeConstraint(rbA, rbB, pivotInA, pivotInB, axisInA, axisInB,
                     useReferenceFrameA),
   rcsJoint(jnt), hingeAngleCurr(0.0), hingeAnglePrev(0.0),
   jointAngleCurr(0.0), jointAnglePrev(0.0), jointVelocity(0.0),
-  jointVelocityPrev(0.0), jointAcceleration(0.0), flipAngle(0.0), jf()
+  jointVelocityPrev(0.0), jointAcceleration(0.0), flipAngle(0.0), offset(0.0),
+  jf()
 {
-  RCHECK(rcsJoint);
+  RCHECK(RcsJoint_isRotation(rcsJoint));
 
-  this->offset = getHingeAngle() - q0;
-  this->hingeAngleCurr = btHingeConstraint::getHingeAngle();
+  this->offset = getConstraintPos() - q0;
+  this->hingeAngleCurr = getConstraintPos();
   this->hingeAnglePrev = hingeAngleCurr;
 
-  this->jointAngleCurr = getHingeAngle() - this->offset + this->flipAngle;
+  this->jointAngleCurr = getConstraintPos() - this->offset + this->flipAngle;
   this->jointAnglePrev = this->jointAngleCurr;
 
   if ((jnt->ctrlType == RCSJOINT_CTRL_POSITION) ||
       (jnt->ctrlType == RCSJOINT_CTRL_VELOCITY))
   {
-    RLOG(5, "Enabling motor for joint %s", jnt->name);
     enableMotor(true);
   }
 
@@ -86,13 +87,23 @@ Rcs::BulletHingeJoint::BulletHingeJoint(RcsJoint* jnt, double q0,
   enableFeedback(true);
 
   // Initialize with given joint angle q0
-  setJointAngle(q0, 1.0);
+  setJointPosition(q0, 1.0);
+
+  // Limit joint movement to RsJoint range
+  setJointLimit(true, jnt->q_min, jnt->q_max);
 }
 
 /*******************************************************************************
  *
  ******************************************************************************/
-double Rcs::BulletHingeJoint::getJointAngle() const
+Rcs::BulletHingeJoint::~BulletHingeJoint()
+{
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+double Rcs::BulletHingeJoint::getJointPosition() const
 {
   return this->jointAngleCurr;
 }
@@ -100,7 +111,7 @@ double Rcs::BulletHingeJoint::getJointAngle() const
 /*******************************************************************************
  *
  ******************************************************************************/
-void Rcs::BulletHingeJoint::setJointAngle(double angle, double dt)
+void Rcs::BulletHingeJoint::setJointPosition(double angle, double dt)
 {
   enableMotor(true);
   double maxImpulse = Math_clip(rcsJoint->maxTorque*dt, 0.0, 1.0);
@@ -154,11 +165,39 @@ void Rcs::BulletHingeJoint::setJointTorque(double torque, double dt)
 }
 
 /*******************************************************************************
- *
+ * Bullet does not support joint limits outside a range of [-2*pi ... 2*pi].
+ * If limits outside that range are set, the joint doesn't seem to move. We
+ * therefore check this and only apply the joint limits when the condition is
+ * fine. We also allow cases where the limits are exactly 2*pi, since that's
+ * a common case in many configuration files. For these angles we modify the
+ * limits a tiny little bit to eb within the range, and hope that nobody will
+ * get mad at us.
  ******************************************************************************/
-void Rcs::BulletHingeJoint::setJointLimit(bool enable, double q_min, double q_max)
+void Rcs::BulletHingeJoint::setJointLimit(bool enable,
+                                          double q_min, double q_max)
 {
-  setLimit(btScalar(q_min+this->offset), btScalar(q_max+this->offset));
+  btScalar ll = btScalar(q_min + this->offset);
+  btScalar ul = btScalar(q_max + this->offset);
+
+  if (ll == -2.0*M_PI)
+  {
+    ll += 1.0e-12;
+  }
+
+  if (ul == 2.0*M_PI)
+  {
+    ul -= 1.0e-12;
+  }
+
+  if ((ll > -2.0*M_PI) && (ul < 2.0*M_PI))
+  {
+    setLimit(ll, ul);
+  }
+  else
+  {
+    RLOG(1, "[%s]: Joint limits outside [-2*pi ... 2*pi] not supported",
+         rcsJoint->name);
+  }
 }
 
 /*******************************************************************************
@@ -193,7 +232,7 @@ void Rcs::BulletHingeJoint::update(double dt)
   RCHECK(dt>0.0);
 
   this->hingeAnglePrev = this->hingeAngleCurr;
-  this->hingeAngleCurr = btHingeConstraint::getHingeAngle();
+  this->hingeAngleCurr = getConstraintPos();
 
   // positive flip +179 -> -179
   if ((hingeAnglePrev>M_PI_2) && (hingeAngleCurr<-M_PI_2))
@@ -209,7 +248,7 @@ void Rcs::BulletHingeJoint::update(double dt)
   }
 
   this->jointAnglePrev = this->jointAngleCurr;
-  this->jointAngleCurr = getHingeAngle() - this->offset + this->flipAngle;
+  this->jointAngleCurr = getConstraintPos() - this->offset + this->flipAngle;
 
   this->jointVelocityPrev = this->jointVelocity;
   this->jointVelocity = (this->jointAngleCurr-this->jointAnglePrev)/dt;
@@ -307,7 +346,28 @@ void Rcs::BulletHingeJoint::reset(double q)
   this->jointVelocityPrev = 0.0;
   this->jointAcceleration = 0.0;
   this->flipAngle = 0.0;
+}
 
-  // setMaxMotorImpulse(1.0e8);
-  // setMotorTarget(hingeAngleCurr, 0.01);
+/*******************************************************************************
+ *
+ ******************************************************************************/
+double Rcs::BulletHingeJoint::getConstraintPos()
+{
+  return btHingeConstraint::getHingeAngle();
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+bool Rcs::BulletHingeJoint::isHinge() const
+{
+  return true;
+}
+
+/*******************************************************************************
+ *
+ ******************************************************************************/
+bool Rcs::BulletHingeJoint::isSlider() const
+{
+  return false;
 }

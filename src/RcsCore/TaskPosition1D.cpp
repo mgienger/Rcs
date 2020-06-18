@@ -54,11 +54,11 @@ static Rcs::TaskFactoryRegistrar<Rcs::TaskPosition1D> registrar4("CylZ");
 /*******************************************************************************
  * Constructor based on xml parsing
  ******************************************************************************/
-Rcs::TaskPosition1D::TaskPosition1D(const std::string& className_,
+Rcs::TaskPosition1D::TaskPosition1D(const std::string& className,
                                     xmlNode* node,
-                                    RcsGraph* _graph,
-                                    int _dim):
-  TaskPosition3D(className_, node, _graph, _dim), index(-1)
+                                    RcsGraph* graph_,
+                                    int dim):
+  TaskPosition3D(className, node, graph_, dim), index(-1)
 {
   double guiMax = 1.0, guiMin = -1.0;
 
@@ -71,21 +71,18 @@ Rcs::TaskPosition1D::TaskPosition1D(const std::string& className_,
   if (getClassName()=="X")
   {
     this->index = 0;
-    getParameter(0)->setParameters(guiMin, guiMax, 1.0, "X [m]");
+    resetParameter(Parameters(guiMin, guiMax, 1.0, "X [m]"));
   }
   else if (getClassName()=="Y")
   {
     this->index = 1;
-    getParameter(0)->setParameters(guiMin, guiMax, 1.0, "Y [m]");
+    resetParameter(Parameters(guiMin, guiMax, 1.0, "Y [m]"));
   }
   else if ((getClassName()=="Z") || (getClassName()=="CylZ"))
   {
     this->index = 2;
-    getParameter(0)->setParameters(guiMin, guiMax, 1.0, "Z [m]");
+    resetParameter(Parameters(guiMin, guiMax, 1.0, "Z [m]"));
   }
-
-  // Other tasks inherit from this. Therefore we can't do any hard checking
-  // on classNames etc.
 
 }
 
@@ -112,24 +109,20 @@ Rcs::TaskPosition1D::TaskPosition1D(const std::string& className,
   setClassName(className);
   setDim(1);
 
-  std::vector<Parameters*>& params = getParameters();
-  params.clear();
-  params.push_back(new Task::Parameters(-2.5, 2.5, 1.0, "Position [m]"));
-
   if (getClassName()=="X")
   {
     this->index = 0;
-    getParameter(0)->name.assign("X Position [m]");
+    resetParameter(Parameters(-2.5, 2.5, 1.0, "X Position [m]"));
   }
   else if (getClassName()=="Y")
   {
     this->index = 1;
-    getParameter(0)->name.assign("Y Position [m]");
+    resetParameter(Parameters(-2.5, 2.5, 1.0, "Y Position [m]"));
   }
   else if ((getClassName()=="Z") || (getClassName()=="CylZ"))
   {
     this->index = 2;
-    getParameter(0)->name.assign("Z Position [m]");
+    resetParameter(Task::Parameters(-2.5, 2.5, 1.0, "Z Position [m]"));
   }
 }
 
