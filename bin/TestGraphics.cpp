@@ -574,6 +574,7 @@ static void testOsgViewer()
     rootnode->addChild(gn.get());
   }
 
+
   if (argP.hasArgument("-h"))
   {
     delete viewer;
@@ -584,6 +585,28 @@ static void testOsgViewer()
   viewer->setUpViewInWindow(12, 38, 640, 480);
   viewer->realize();
   viewer->run();
+
+  delete viewer;
+}
+
+/*******************************************************************************
+* Test for Rcs viewer
+******************************************************************************/
+static void testRcsViewer()
+{
+  int loopCount = 0;
+  Rcs::Viewer* viewer = new Rcs::Viewer();
+  viewer->setTitle("Window title before realize()");
+  viewer->add(new Rcs::COSNode());
+  viewer->runInThread();
+
+  while (runLoop)
+  {
+    Timer_waitDT(1.0);
+    char newTitle[256];
+    snprintf(newTitle, 256, "Window title %d", loopCount++);
+    viewer->setTitle(newTitle);
+  }
 
   delete viewer;
 }
@@ -693,6 +716,7 @@ static void testMeshNode()
     if (withScaling)
     {
       RcsMeshData* cpyOfMesh = RcsMesh_clone(mesh);
+      RCHECK(cpyOfMesh);
       RcsMesh_scale(cpyOfMesh, scale);
       mn->setMesh(cpyOfMesh->vertices, cpyOfMesh->nVertices,
                   cpyOfMesh->faces, cpyOfMesh->nFaces);
@@ -719,8 +743,8 @@ static void testCameraTransform()
   Rcs::KeyCatcherBase::registerKey("-", "Shift camera transform to left");
   Rcs::KeyCatcherBase::registerKey("e", "Rotate camera transform about z");
   Rcs::KeyCatcherBase::registerKey("E", "Align camera transform horizontally");
-  Rcs::KeyCatcherBase::registerKey("Z", "Increase field of view");
-  Rcs::KeyCatcherBase::registerKey("z", "Decrease field of view");
+  Rcs::KeyCatcherBase::registerKey("T", "Increase field of view");
+  Rcs::KeyCatcherBase::registerKey("t", "Decrease field of view");
 
   // Parse command line arguments
   char xmlFileName[128] = "gScenario.xml";
@@ -818,21 +842,21 @@ static void testCameraTransform()
       RMSGS("Camera transform after setting:");
       HTr_fprint(stdout, &A_CI);
     }
-    else if (kc->getAndResetKey('Z'))
+    else if (kc->getAndResetKey('T'))
     {
       double fov = viewer->getFieldOfView();
-      RMSGS("Field of view: %f", fov);
-      viewer->setFieldOfView(fov + 5.0);
+      RMSGS("Field of view: %f deg", RCS_RAD2DEG(fov));
+      viewer->setFieldOfView(fov + RCS_DEG2RAD(5.0));
       fov = viewer->getFieldOfView();
-      RMSGS("Field of view after setting: %f", fov);
+      RMSGS("Field of view after setting: %f deg", RCS_RAD2DEG(fov));
     }
-    else if (kc->getAndResetKey('z'))
+    else if (kc->getAndResetKey('t'))
     {
       double fov = viewer->getFieldOfView();
-      RMSGS("Field of view: %f", fov);
-      viewer->setFieldOfView(fov - 5.0);
+      RMSGS("Field of view: %f deg", RCS_RAD2DEG(fov));
+      viewer->setFieldOfView(fov - RCS_DEG2RAD(5.0));
       fov = viewer->getFieldOfView();
-      RMSGS("Field of view after setting: %f", fov);
+      RMSGS("Field of view after setting: %f deg", RCS_RAD2DEG(fov));
     }
 
     pthread_mutex_unlock(&mtx);
@@ -971,6 +995,7 @@ void testDepthRenderer()
   }
 
   RcsGraph* graph = RcsGraph_create(xmlFileName);
+  RCHECK(graph);
   osg::ref_ptr<Rcs::GraphNode> gn = new Rcs::GraphNode(graph);
   Rcs::Viewer* viewer = new Rcs::Viewer();
   viewer->setCameraTransform(HTr_identity());
@@ -1040,6 +1065,7 @@ int main(int argc, char** argv)
       printf("\t\t14   Test 3d text\n");
       printf("\t\t15   Test findChildrenOfType() function\n");
       printf("\t\t16   Test depth rendering\n");
+      printf("\t\t17   Test RcsViewer setTitle() method\n");
       break;
 
     case 0:
@@ -1138,6 +1164,10 @@ int main(int argc, char** argv)
       testDepthRenderer();
       break;
     }
+
+    case 17:
+      testRcsViewer();
+      break;
 
     default:
       RFATAL("No mode %d", mode);

@@ -976,7 +976,7 @@ unsigned int RcsGraph_numJointLimitsViolated(const RcsGraph* self,
 
   RCSGRAPH_TRAVERSE_JOINTS(self)
   {
-    // We skip updating the matrix for constrained dofs
+    // We skip the check for constrained dofs
     if (JNT->constrained==true)
     {
       continue;
@@ -1374,6 +1374,7 @@ void RcsGraph_printState(const RcsGraph* self, const MatNd* q)
 void RcsGraph_fprintModelState(FILE* out, const RcsGraph* self, const MatNd* q)
 {
   RcsStateType stateType;
+  char buf[256];
 
   if (q->m == self->dof)
   {
@@ -1409,18 +1410,11 @@ void RcsGraph_fprintModelState(FILE* out, const RcsGraph* self, const MatNd* q)
       continue;
     }
 
-    int index = (stateType==RcsStateIK) ? JNT->jacobiIndex : JNT->jointIndex;
+    int idx = (stateType==RcsStateIK) ? JNT->jacobiIndex : JNT->jointIndex;
+    double qi = RcsJoint_isRotation(JNT)?RCS_RAD2DEG(q->ele[idx]):q->ele[idx];
 
-    if (RcsJoint_isRotation(JNT))
-    {
-      fprintf(out, "  <joint_state joint=\"%s\" position=\"%.3f\" />\n",
-              JNT->name, RCS_RAD2DEG(q->ele[index]));
-    }
-    else
-    {
-      fprintf(out, "  <joint_state joint=\"%s\" position=\"%.3f\" />\n",
-              JNT->name, q->ele[index]);
-    }
+    fprintf(out, "  <joint_state joint=\"%s\" position=\"%s\" />\n",
+            JNT->name, String_fromDouble(buf, qi, 6));
   }
 
 
@@ -1923,6 +1917,24 @@ int RcsGraph_check(const RcsGraph* self)
 
   RLOG(6, "Graph check : %d errors", nErrors);
 
+  // Check that coupled joints are not coupled against other coupled joints
+  // if they have no constraint
+  RCSGRAPH_TRAVERSE_JOINTS(self)
+  {
+    if (JNT->constrained)
+    {
+      continue;
+    }
+
+    if (JNT->coupledTo && JNT->coupledTo->coupledTo)
+    {
+      RLOG(1, "Joint %s is coupled against the coupled joint %s",
+           JNT->name, JNT->coupledTo->name);
+      nErrors++;
+    }
+  }
+
+
   return nErrors;
 }
 
@@ -2401,8 +2413,8 @@ void RcsGraph_relativeRigidBodyDoFs(const RcsBody* body,
                                     const HTr* new_A_BI_parent,
                                     double angles[6])
 {
-  RCHECK(body);
-  RCHECK_MSG(body->rigid_body_joints, "Body \"%s\"", body->name);
+  RCHECK_MSG(RcsBody_isFloatingBase(body),
+             "Body \"%s\"", body ? body->name : "NULL");
 
   const HTr* A_BI_body = NULL;
   const HTr* A_BI_parent = NULL;
@@ -2700,9 +2712,6 @@ static void RcsGraph_recomputeJointIndices(RcsGraph* self, MatNd* stateVec[],
     }
     nqCount++;
 
-    //JNT->jacobiIndex = (JNT->constrained == false) ? njCount : -1;
-    //njCount++;
-
     if (JNT->constrained == false)
     {
       JNT->jacobiIndex = njCount;
@@ -2802,6 +2811,12 @@ void RcsGraph_makeJointsConsistent(RcsGraph* self)
  ******************************************************************************/
 void RcsGraph_fprintXML(FILE* out, const RcsGraph* self)
 {
+  if (out==NULL)
+  {
+    RLOG(1, "Can't write graph to NULL xml file");
+    return;
+  }
+
   fprintf(out, "<Graph name=\"DefaultPose\" >\n\n");
 
   RCSGRAPH_TRAVERSE_BODIES(self)

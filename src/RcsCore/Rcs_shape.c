@@ -347,22 +347,22 @@ static void RcsShape_capsuleInertia(double I[3], double density, double r,
 /*******************************************************************************
  * Inertia tensor of a triangle mesh about its COM.
  ******************************************************************************/
-/* static void RcsShape_meshInertia(double I_diag[3], const RcsShape* self, */
-/*                                  double density) */
-/* { */
-/*   RcsMeshData* mesh = (RcsMeshData*) self->userData; */
-/*   if (mesh != NULL) */
-/*   { */
-/*     double I[3][3], com[3]; */
-/*     RcsMesh_computeInertia(mesh, I, com); */
-/*     Vec3d_set(I_diag, I[0][0], I[1][1], I[2][2]); */
-/*     Vec3d_constMulSelf(I_diag, density); */
-/*   } */
-/*   else */
-/*   { */
-/*     Vec3d_setZero(I_diag); */
-/*   } */
-/* } */
+static void RcsShape_meshInertia(double I_diag[3], const RcsShape* self,
+                                 double density)
+{
+  RcsMeshData* mesh = (RcsMeshData*) self->userData;
+  if (mesh != NULL)
+  {
+    double I[3][3], com[3];
+    RcsMesh_computeInertia(mesh, I, com);
+    Vec3d_set(I_diag, I[0][0], I[1][1], I[2][2]);
+    Vec3d_constMulSelf(I_diag, density);
+  }
+  else
+  {
+    Vec3d_setZero(I_diag);
+  }
+}
 
 /*******************************************************************************
  * Inertia tensor of a cone about its COM.
@@ -402,6 +402,8 @@ void RcsShape_computeInertiaTensor(const RcsShape* self, const double density,
     case RCSSHAPE_MARKER:
       break;
     case RCSSHAPE_MESH:
+      RcsShape_meshInertia(I_diag, self, density);
+      break;
     case RCSSHAPE_OCTREE:
     {
       RLOG(5, "Inertia computation for shape type \"%s\" not implemented",
@@ -861,32 +863,35 @@ void RcsShape_fprintXML(FILE* out, const RcsShape* self)
       break;
   }
 
-  // Compute type
-  if (self->computeType & RCSSHAPE_COMPUTE_DISTANCE)
+  // Compute type, only written out if shape is not a frame
+  if (self->type != RCSSHAPE_REFFRAME)
   {
-    fprintf(out, "distance=\"true\" ");
-  }
-  else
-  {
-    fprintf(out, "distance=\"false\" ");
-  }
+    if (self->computeType & RCSSHAPE_COMPUTE_DISTANCE)
+    {
+      fprintf(out, "distance=\"true\" ");
+    }
+    else
+    {
+      fprintf(out, "distance=\"false\" ");
+    }
 
-  if (self->computeType & RCSSHAPE_COMPUTE_PHYSICS)
-  {
-    fprintf(out, "physics=\"true\" ");
-  }
-  else
-  {
-    fprintf(out, "physics=\"false\" ");
-  }
+    if (self->computeType & RCSSHAPE_COMPUTE_PHYSICS)
+    {
+      fprintf(out, "physics=\"true\" ");
+    }
+    else
+    {
+      fprintf(out, "physics=\"false\" ");
+    }
 
-  if (self->computeType & RCSSHAPE_COMPUTE_GRAPHICS)
-  {
-    fprintf(out, "graphics=\"true\" ");
-  }
-  else
-  {
-    fprintf(out, "graphics=\"false\" ");
+    if (self->computeType & RCSSHAPE_COMPUTE_GRAPHICS)
+    {
+      fprintf(out, "graphics=\"true\" ");
+    }
+    else
+    {
+      fprintf(out, "graphics=\"false\" ");
+    }
   }
 
   // Scale
@@ -933,7 +938,8 @@ void RcsShape_fprintXML(FILE* out, const RcsShape* self)
   }
 
   // Color
-  if (self->color && (!STREQ(self->color, "DEFAULT")))
+  if ((self->type != RCSSHAPE_REFFRAME) && self->color
+      && (!STREQ(self->color, "DEFAULT")))
   {
     fprintf(out, "color=\"%s\" ", self->color);
   }

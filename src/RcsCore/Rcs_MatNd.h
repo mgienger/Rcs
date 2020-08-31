@@ -204,6 +204,24 @@ MatNd* MatNd_createFromFile(const char* fileName);
 MatNd* MatNd_createFromString(const char* str);
 
 /*! \ingroup MatNdFunctions
+ * \brief Use MatNd_create to create a new matrix, filled with zeros,
+ *        that has the same shape as the given matrix.
+ *
+ * \param[in] src input matrix
+ * \return output matrix
+ */
+MatNd* MatNd_createLike(const MatNd* src);
+
+/*!\ingroup MatNdFunctions
+ * \brief Use MatNd_create to create a new matrix, filled with zeros, that has
+ *        the same shape as the given matrix.
+ *
+ * \param[in] src input matrix
+ * \param[out] dst output matrix
+ */
+void MatNd_createLike2(MatNd* dst, const MatNd* src);
+
+/*! \ingroup MatNdFunctions
  *  \hideinitializer
  *  \brief see \ref MatNd_create.
  *         This version allocates memory on the stack if the array size is
@@ -262,6 +280,7 @@ MatNd* MatNd_createFromString(const char* str);
     self->stackMem = true;                                             \
     memcpy(self->ele, src->ele, src->size*sizeof(double));             \
   }
+
 
 ///@}
 
@@ -1887,6 +1906,17 @@ double MatNd_computeManipulabilityIndexGradient(MatNd* grad,
                                                 const MatNd* H,
                                                 const MatNd* W,
                                                 const MatNd* J);
+
+/*! Compute the column-wise softmax
+ *  \f$ \sigma(x)_{i,j} = \frac{e^{x_{i,j}}}{\sum_{k=1}^{K} e^{x_{k,j}}} \f$.
+ *  The entries of the resulting matrix sum to one
+ *
+ * \param[in]  src input matrix
+ * \param[in]  beta scaling factor, as beta goes to infinity we get the argmax
+ * \param[out] dst output matrix
+ */
+void MatNd_softMax(MatNd* dst, const MatNd* src, double beta);
+
 
 ///@}
 

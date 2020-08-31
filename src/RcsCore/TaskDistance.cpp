@@ -84,8 +84,9 @@ Rcs::TaskDistance::TaskDistance(const TaskDistance& copyFromMe,
  ******************************************************************************/
 Rcs::TaskDistance::TaskDistance(RcsGraph* graph_,
                                 const RcsBody* effector,
-                                const RcsBody* refBdy) :
-  TaskGenericIK(), gainDX(1.0)
+                                const RcsBody* refBdy,
+                                double gainDX_) :
+  TaskGenericIK(), gainDX(gainDX_)
 
 {
   int nQueries = RcsBody_getNumDistanceQueries(effector, refBdy);
@@ -104,7 +105,7 @@ Rcs::TaskDistance::TaskDistance(RcsGraph* graph_,
   setRefBody(refBdy);
   setRefFrame(refFrame ? refFrame : refBdy);
   setDim(1);
-  resetParameter(Parameters(-1.0, 1.0, 1.0, "Distance [m]"));
+  resetParameter(Parameters(-0.1, 1.0, 1.0, "Distance [m]"));
 }
 
 /*******************************************************************************
@@ -162,6 +163,20 @@ void Rcs::TaskDistance::computeH(MatNd* hessian) const
   MatNd_reshapeAndSetZero(hessian, graph->nJ, graph->nJ);
   RcsBody_distanceHessian(graph, this->refBody, this->ef, true,
                           cpRef, cpEf, hessian->ele);
+}
+
+/*******************************************************************************
+ * We give it a bit more permissive error limits since the distance gradient
+ * is assuming body-fixed closest points which is only an approximation.
+ ******************************************************************************/
+bool Rcs::TaskDistance::testJacobian(double errorLimit,
+                             double delta,
+                             bool relativeError,
+                             bool verbose)
+{
+  errorLimit = 0.1;   // 10% error is permitted
+  relativeError = true;
+  return Task::testJacobian(errorLimit, delta, relativeError, verbose);
 }
 
 /*******************************************************************************

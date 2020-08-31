@@ -437,7 +437,7 @@ static RcsBody* findBdyByNameNoCase(const char* name, RcsBody** bdyVec)
  ******************************************************************************/
 RcsJoint* parseJointURDF(xmlNode* node)
 {
-  // Return if node is not a body node
+  // Return if node is not a joint node
   if (!isXMLNodeNameNoCase(node, "joint"))
   {
     RLOG(5, "Parsing URDF joint but xml node doesn't contain joint data");
@@ -517,6 +517,32 @@ RcsJoint* parseJointURDF(xmlNode* node)
 
   jnt->q0 = (jnt->q_max + jnt->q_min) / 2.0;
   jnt->q_init = jnt->q0;
+
+  // Create coupled joint if mimic tag is present
+  xmlNodePtr mimicNode = getXMLChildByName(node, "mimic");
+  if (mimicNode)
+  {
+    // Coupled to is required
+    char coupledTo[256] = "";
+    len = getXMLNodePropertyStringN(mimicNode, "joint", coupledTo, 256);
+    RCHECK_MSG(len > 0, "Couldn't find tag \"joint\" in mimic joint %s",
+               jnt->name);
+    jnt->coupledJointName = String_clone(coupledTo);
+
+    // Here we force-set the constraint of the joint. This invalidates the
+    // joint coupling projection. The joint is not treated in the inverse
+    // kinematics, and its value is kinematically overwritten after the
+    // forward kinematics step.
+    jnt->constrained = true;
+
+    // Multiplier is optional (default: 1.0)
+    jnt->couplingFactors = MatNd_create(1, 1);
+    MatNd_setElementsTo(jnt->couplingFactors, 1.0);
+    getXMLNodePropertyDouble(mimicNode, "multiplier", jnt->couplingFactors->ele);
+
+    RLOG(5, "Joint \"%s\" coupled to \"%s\" with factor %lf",
+         jnt->name, jnt->coupledJointName, *jnt->couplingFactors->ele);
+  }
 
   return jnt;
 }
@@ -923,6 +949,17 @@ RcsBody* RcsGraph_rootBodyFromURDFFile(const char* filename,
         strcat(newName, suffix);
         String_copyOrRecreate(&j->name, newName);
         RFREE(newName);
+
+        // Also need to add the suffix to the coupledJointName
+        if (j->coupledJointName != NULL)
+        {
+          size_t nameLen = strlen(j->coupledJointName) + strlen(suffix) + 1;
+          char* newName = RNALLOC(nameLen, char);
+          strcpy(newName, j->coupledJointName);
+          strcat(newName, suffix);
+          String_copyOrRecreate(&j->coupledJointName, newName);
+          RFREE(newName);
+        }
       }
       RCHECK(jntIdx<numJnts);
       jntVec[jntIdx++] = j;
